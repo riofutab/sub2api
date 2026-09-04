@@ -986,11 +986,16 @@ func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService, lockCache Lead
 // ProvideChannelMonitorService 创建渠道监控服务（CRUD + RunCheck + 用户视图聚合）。
 // 加密器复用 wire 中已注入的 SecretEncryptor（AES-256-GCM）。
 // settingService gates RunCheck via channel_monitor_enabled + channel_monitor_mode.
+// The URL allowlist also controls whether monitor endpoints may resolve to
+// private hosts, keeping channel monitoring aligned with other outbound calls.
 func ProvideChannelMonitorService(
 	repo ChannelMonitorRepository,
 	encryptor SecretEncryptor,
 	settingService *SettingService,
+	cfg *config.Config,
 ) *ChannelMonitorService {
+	allowlist := cfg.Security.URLAllowlist
+	monitorAllowPrivateEndpoints.Store(!allowlist.Enabled || allowlist.AllowPrivateHosts)
 	svc := NewChannelMonitorService(repo, encryptor)
 	svc.SetRuntimeReader(settingService)
 	return svc
