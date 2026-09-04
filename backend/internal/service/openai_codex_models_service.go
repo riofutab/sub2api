@@ -498,6 +498,7 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		}
 	}
 
+	applyCodexToolCapabilities(&descriptor, configuredCodexToolCapabilities(modelID))
 	return descriptor
 }
 
@@ -1912,34 +1913,35 @@ func convertOpenAIModelListToCodexManifestForAccount(body []byte, account *Accou
 	if _, ok := envelope["models"]; ok {
 		return body
 	}
-	data, ok := envelope["data"]
+	_, ok := envelope["data"]
 	if !ok {
 		return body
 	}
-	var entries []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return body
-	}
-	modelIDs := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		id := strings.TrimSpace(entry.ID)
-		if id == "" {
-			continue
-		}
-		modelIDs = append(modelIDs, id)
-	}
-	if len(modelIDs) == 0 {
+	modelIDs, upstreamMetadata, err := extractUpstreamModelCatalog(body, false)
+	if err != nil || len(modelIDs) == 0 {
 		return body
 	}
 	imageInputModels := make(map[string]bool, len(modelIDs))
+	metadataModels := make(map[string]string, len(modelIDs))
+	modelMetadata := make(map[string]codexModelMetadataOverride, len(modelIDs))
 	for _, modelID := range modelIDs {
 		if accountCodexModelSupportsImageInput(account, modelID) {
 			imageInputModels[modelID] = true
 		}
+		metadata := upstreamMetadata[modelID]
+		if account != nil {
+			mappedModel := account.GetMappedModel(modelID)
+			metadataModels[modelID] = mappedModel
+			if synced, ok := account.GetUpstreamModelMetadata(mappedModel); ok {
+				// 实时上游声明优先；只有缺失字段才使用当前账号快照。
+				metadata, _ = mergeUpstreamModelMetadata(metadata, synced)
+			}
+		}
+		if upstreamModelMetadataIsUseful(metadata) {
+			modelMetadata[modelID] = codexModelMetadataOverride{UpstreamModelMetadata: metadata}
+		}
 	}
-	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, nil, nil)
+	converted, err := buildCodexModelsManifest(modelIDs, imageInputModels, metadataModels, modelMetadata)
 	if err != nil {
 		return body
 	}
@@ -1964,9 +1966,12 @@ func (s *OpenAIGatewayService) CompleteAPIKeyCodexModelsManifestForClient(manife
 		}
 	}
 	var err error
-	body, err = applySyncedAPIKeyCodexModelMetadata(body, account, manifest.convertedFromOpenAIModelList)
-	if err != nil {
-		return err
+	// 普通列表在转换时已合并实时元数据和当前快照，不能再次用快照覆盖实时声明。
+	if !manifest.convertedFromOpenAIModelList || len(manifest.upstreamSourceBody) == 0 {
+		body, err = applySyncedAPIKeyCodexModelMetadata(body, account, manifest.convertedFromOpenAIModelList)
+		if err != nil {
+			return err
+		}
 	}
 	body, err = completeAPIKeyCodexModelsManifestMetadata(
 		body,
@@ -2011,12 +2016,13 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 			continue
 		}
 		slug = strings.TrimSpace(slug)
-		metadata, ok := snapshot.Models[slug]
+		metadataModelID := account.GetMappedModel(slug)
+		metadata, ok := snapshot.Models[metadataModelID]
 		if !ok {
 			continue
 		}
 
-		descriptor := newConfiguredCodexModelDescriptor(slug)
+		descriptor := newConfiguredCodexModelDescriptor(metadataModelID)
 		applyUpstreamModelMetadataToCodexDescriptor(
 			&descriptor,
 			codexModelMetadataOverride{UpstreamModelMetadata: metadata},
@@ -2046,6 +2052,9 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 		if metadata.ContextWindow > 0 {
 			fields = append(fields, "context_window", "max_context_window")
 		}
+		for field := range normalizeCodexToolCapabilities(metadata.CodexToolCapabilities) {
+			fields = append(fields, field)
+		}
 
 		modelChanged := false
 		for _, field := range fields {
@@ -2055,7 +2064,8 @@ func applySyncedAPIKeyCodexModelMetadata(body []byte, account *Account, overwrit
 			}
 			current, currentExists := model[field]
 			current = bytes.TrimSpace(current)
-			if !overwriteLocalDefaults && currentExists && len(current) > 0 && !bytes.Equal(current, []byte("null")) {
+			if !overwriteLocalDefaults && currentExists && len(current) > 0 &&
+				(isCodexToolCapabilityField(field) || !bytes.Equal(current, []byte("null"))) {
 				continue
 			}
 			if bytes.Equal(current, bytes.TrimSpace(value)) {
@@ -2140,7 +2150,16 @@ func completeAPIKeyCodexModelsManifestMetadata(body []byte, completeAll bool, ac
 			continue
 		}
 
-		descriptor := newConfiguredCodexModelDescriptor(slug)
+		metadataModelID := slug
+		if account != nil {
+			metadataModelID = account.GetMappedModel(slug)
+		}
+		descriptor := newConfiguredCodexModelDescriptor(metadataModelID)
+		descriptor.Slug = slug
+		if metadataModelID != slug {
+			descriptor.DisplayName = slug
+			descriptor.Description = configuredCodexCustomDescription
+		}
 		if accountCodexModelSupportsImageInput(account, slug) {
 			descriptor.InputModalities = []string{"text", "image"}
 		}
@@ -2210,7 +2229,7 @@ func mergeMissingCodexModelFields(current, defaults map[string]json.RawMessage) 
 	changed := false
 	for key, defaultValue := range defaults {
 		currentValue, exists := current[key]
-		if !exists || (bytes.Equal(bytes.TrimSpace(currentValue), []byte("null")) &&
+		if !exists || (!isCodexToolCapabilityField(key) && bytes.Equal(bytes.TrimSpace(currentValue), []byte("null")) &&
 			!bytes.Equal(bytes.TrimSpace(defaultValue), []byte("null"))) {
 			current[key] = defaultValue
 			changed = true
