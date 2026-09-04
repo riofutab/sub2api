@@ -767,6 +767,9 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
 	}
+	if isOpenAIShortInputPolicyError(statusCode, responseBody) {
+		return true
+	}
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, "", responseBody) {
 		return true
 	}
@@ -1528,6 +1531,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
+	if isOpenAIShortInputPolicyError(http.StatusBadRequest, payload) {
+		return true
+	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
 	}
@@ -1579,6 +1585,9 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
+	}
+	if isOpenAIShortInputPolicyError(http.StatusBadRequest, payload) {
+		return true
 	}
 	if isOpenAIUpstreamAccessStateError(message, payload) {
 		return true
