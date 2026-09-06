@@ -3,15 +3,63 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"strings"
 )
 
-var codexToolCapabilityFields = [...]string{
-	"apply_patch_tool_type", "comp_hash", "tool_mode", "use_responses_lite",
+var codexToolCapabilityFields = []string{
+	"supports_search_tool", "apply_patch_tool_type", "comp_hash", "tool_mode", "use_responses_lite",
 }
 
-// configuredCodexToolCapabilities 仅为已核实的 Codex 目录型号提供回退值。
-// 补丁格式、代码模式与压缩协议分别声明，不能把新型号的四个字段套给所有 GPT 模型。
+func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite bool) bool {
+	changed := false
+	for _, field := range codexToolCapabilityFields {
+		value := bytes.TrimSpace(src[field])
+		if len(value) == 0 {
+			continue
+		}
+		// These five Codex fields are nullable booleans or strings, never arbitrary objects.
+		if !bytes.Equal(value, []byte("null")) {
+			if field == "supports_search_tool" || field == "use_responses_lite" {
+				if !bytes.Equal(value, []byte("true")) && !bytes.Equal(value, []byte("false")) {
+					continue
+				}
+			} else {
+				var text string
+				if json.Unmarshal(value, &text) != nil {
+					continue
+				}
+			}
+		}
+		current, exists := dst[field]
+		if (exists && !overwrite) || bytes.Equal(current, value) {
+			continue
+		}
+		dst[field] = append(json.RawMessage(nil), value...)
+		changed = true
+	}
+	return changed
+}
+
+func normalizeCodexToolCapabilities(fields map[string]json.RawMessage) map[string]json.RawMessage {
+	normalized := make(map[string]json.RawMessage)
+	applyCodexToolCapabilities(normalized, fields, true)
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func isCodexToolCapabilityField(field string) bool {
+	for _, candidate := range codexToolCapabilityFields {
+		if field == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// configuredCodexToolCapabilities only synthesizes verified local fallbacks.
 func configuredCodexToolCapabilities(modelID string) map[string]json.RawMessage {
 	capabilities := map[string]json.RawMessage{
 		"apply_patch_tool_type": json.RawMessage("null"),
@@ -48,61 +96,18 @@ func configuredCodexToolCapabilities(modelID string) map[string]json.RawMessage 
 	return capabilities
 }
 
-func isCodexToolCapabilityField(field string) bool {
-	for _, candidate := range codexToolCapabilityFields {
-		if field == candidate {
-			return true
-		}
+func applyCodexToolCapabilitiesToDescriptor(descriptor *configuredCodexModelDescriptor, fields map[string]json.RawMessage) {
+	if descriptor == nil {
+		return
 	}
-	return false
-}
-
-// normalizeCodexToolCapabilities 在上游信任边界只接收工具契约字段。
-// RawMessage 保留“未声明”和显式 null/false 的区别，避免回退逻辑重新开启上游禁用的能力。
-func normalizeCodexToolCapabilities(fields map[string]json.RawMessage) map[string]json.RawMessage {
-	var normalized map[string]json.RawMessage
-	for _, field := range codexToolCapabilityFields {
-		raw, exists := fields[field]
-		if !exists {
-			continue
-		}
-		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
-			continue
-		}
-		valid := value == nil
-		switch field {
-		case "apply_patch_tool_type":
-			valid = valid || value == "freeform" || value == "function"
-		case "comp_hash", "tool_mode":
-			_, isString := value.(string)
-			valid = valid || isString
-		case "use_responses_lite":
-			_, isBool := value.(bool)
-			valid = valid || isBool
-		}
-		if !valid {
-			continue
-		}
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			continue
-		}
-		if normalized == nil {
-			normalized = make(map[string]json.RawMessage)
-		}
-		normalized[field] = encoded
-	}
-	return normalized
-}
-
-func applyCodexToolCapabilities(descriptor *configuredCodexModelDescriptor, fields map[string]json.RawMessage) {
 	for field, raw := range normalizeCodexToolCapabilities(fields) {
 		var value any
 		if err := json.Unmarshal(raw, &value); err != nil {
 			continue
 		}
 		switch field {
+		case "supports_search_tool":
+			descriptor.SupportsSearchTool, _ = value.(bool)
 		case "apply_patch_tool_type":
 			descriptor.ApplyPatchToolType = nil
 			if patchType, ok := value.(string); ok {
@@ -116,6 +121,54 @@ func applyCodexToolCapabilities(descriptor *configuredCodexModelDescriptor, fiel
 			descriptor.UseResponsesLite, _ = value.(bool)
 		}
 	}
+}
+
+func accountCodexToolCapabilities(account *Account, modelID string) map[string]json.RawMessage {
+	capabilities := make(map[string]json.RawMessage)
+	if account == nil {
+		return capabilities
+	}
+	if metadata, ok := account.GetUpstreamModelMetadata(modelID); ok {
+		applyCodexToolCapabilities(capabilities, metadata.CodexToolCapabilities, true)
+	}
+	if account.IsOpenAI() && shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
+		// This bridge implements client-side tool discovery, even without a native manifest.
+		applyCodexToolCapabilities(capabilities, map[string]json.RawMessage{"supports_search_tool": json.RawMessage("true")}, false)
+	}
+	// Codex 0.153's bundled Astra catalog verifies these values. API-key routes
+	// use standard Responses, not the ChatGPT-only Responses Lite wire.
+	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
+	if baseURL == "" {
+		baseURL = account.GetOpenAIBaseURL()
+	}
+	parsed, err := url.Parse(baseURL)
+	official := err == nil && (strings.EqualFold(parsed.Hostname(), "api.openai.com") ||
+		(account.IsOpenAIOAuth() && strings.EqualFold(parsed.Hostname(), "chatgpt.com")))
+	if account.IsOpenAI() && isOpenAIGPT6AstraModel(modelID) && official {
+		defaults := map[string]json.RawMessage{
+			"supports_search_tool":  json.RawMessage("true"),
+			"apply_patch_tool_type": json.RawMessage(`"freeform"`),
+			"comp_hash":             json.RawMessage(`"3000"`),
+			"tool_mode":             json.RawMessage("null"),
+			"use_responses_lite":    json.RawMessage("false"),
+		}
+		if account.IsOpenAIOAuth() {
+			defaults["tool_mode"] = json.RawMessage(`"code_mode_only"`)
+			defaults["use_responses_lite"] = json.RawMessage("true")
+		}
+		applyCodexToolCapabilities(capabilities, defaults, false)
+	}
+	if account.IsOpenAIApiKey() {
+		target := modelID
+		if isOpenAIGPT6AstraModel(target) {
+			target = "gpt-6-astra"
+		}
+		_, disabled := apiKeyCodexModelsWithoutResponsesLite[target]
+		if disabled && bytes.Equal(capabilities["use_responses_lite"], []byte("true")) {
+			capabilities["use_responses_lite"] = json.RawMessage("false")
+		}
+	}
+	return capabilities
 }
 
 func groupCodexModelMetadata(
@@ -192,8 +245,9 @@ func groupCodexModelMetadata(
 		if !ok {
 			missingMetadata = true
 		}
-		// 工具回退依据真实路由目标；公开别名即使叫 GPT，也可能实际映射到未知模型。
+		// Tool fallbacks follow the actual routed model, not the public alias.
 		metadata.ID = strings.TrimSpace(lookupModel)
+		metadata.CodexToolCapabilities = accountCodexToolCapabilities(account, lookupModel)
 		candidates = append(candidates, metadata)
 	}
 	if len(candidates) == 0 {
@@ -201,7 +255,7 @@ func groupCodexModelMetadata(
 	}
 	metadata := intersectUpstreamModelMetadata(modelID, candidates)
 	if missingMetadata {
-		// 保持现有推理/模态的缺失处理，但工具能力仍需包含所有路由账号的保守交集。
+		// Missing descriptive metadata fails closed while retaining the shared tool contract.
 		metadata = codexModelMetadataOverride{
 			UpstreamModelMetadata: UpstreamModelMetadata{ID: modelID, CodexToolCapabilities: metadata.CodexToolCapabilities},
 			reasoningConflict:     explicitTargetsConflict, inputModalitiesConflict: explicitTargetsConflict,
@@ -410,7 +464,7 @@ func applyUpstreamModelMetadataToCodexDescriptor(
 		descriptor.ContextWindow = metadata.ContextWindow
 		descriptor.MaxContextWindow = metadata.ContextWindow
 	}
-	applyCodexToolCapabilities(descriptor, metadata.CodexToolCapabilities)
+	applyCodexToolCapabilitiesToDescriptor(descriptor, metadata.CodexToolCapabilities)
 }
 
 func configuredCodexReasoningLevelDescription(level string) string {
