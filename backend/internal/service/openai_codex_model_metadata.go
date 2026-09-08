@@ -426,6 +426,13 @@ func intersectUpstreamModelMetadata(modelID string, candidates []UpstreamModelMe
 		for _, candidate := range toolCandidates[1:] {
 			if !bytes.Equal(shared, candidate[field]) {
 				shared = result.CodexToolCapabilities[field]
+				if len(shared) == 0 {
+					// Explicitly clear conflicting fields so descriptor defaults cannot restore them.
+					shared = json.RawMessage("null")
+					if field == "supports_search_tool" || field == "use_responses_lite" {
+						shared = json.RawMessage("false")
+					}
+				}
 				break
 			}
 		}
