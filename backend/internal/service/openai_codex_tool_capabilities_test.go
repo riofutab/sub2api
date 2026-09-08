@@ -82,7 +82,7 @@ func TestSyncUpstreamModelCatalogPreservesCodexToolCapabilities(t *testing.T) {
 	require.NotContains(t, string(body), "instructions_template")
 
 	account.Credentials["model_mapping"] = map[string]any{"my-coder": "future-coder"}
-	manifest, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"my-coder"}, []Account{*account}, nil, true)
+	manifest, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"my-coder"}, []Account{*account}, nil, nil, true)
 	require.NoError(t, err)
 	model := decodeCodexManifestModels(t, manifest)[0]
 	require.Equal(t, "my-coder", model["slug"])
@@ -134,7 +134,7 @@ func TestGroupCodexToolCapabilitiesIntersectMappedTargets(t *testing.T) {
 				accounts[i] = codexToolCapabilityAccount(t, int64(i+1), tt.alias, target, tt.fields[i])
 			}
 			for range 2 {
-				body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{tt.alias}, accounts, nil, true)
+				body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{tt.alias}, accounts, nil, nil, true)
 				require.NoError(t, err)
 				model := decodeCodexManifestModels(t, body)[0]
 				require.Equal(t, tt.patch, model["apply_patch_tool_type"])
@@ -167,7 +167,7 @@ func TestCompleteAPIKeyCodexToolCapabilitiesPreserveUpstreamPrecedence(t *testin
 		t.Run(tt.name, func(t *testing.T) {
 			account := codexToolCapabilityAccount(t, 1, "gpt-5.5", "gpt-5.5", `"apply_patch_tool_type":"function","comp_hash":"synced-v1","tool_mode":"code_mode_only","use_responses_lite":true`)
 			account.Credentials["base_url"] = "https://provider.example/v1"
-			manifest := &CodexModelsManifest{Body: []byte(tt.body), upstreamSourceBody: []byte(tt.body), convertedFromOpenAIModelList: tt.converted}
+			manifest := &OpenAIModelsResponse{Body: []byte(tt.body), upstreamSourceBody: []byte(tt.body), convertedFromOpenAIModelList: tt.converted}
 			svc := &OpenAIGatewayService{}
 			require.NoError(t, svc.CompleteAPIKeyCodexModelsManifestForClient(manifest, &account))
 			model := decodeCodexManifestModels(t, manifest.Body)[0]

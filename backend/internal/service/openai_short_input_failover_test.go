@@ -13,7 +13,7 @@ func TestOpenAIShortInputPolicyClassification(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 
 	require.True(t, isOpenAIShortInputPolicyError(http.StatusBadRequest, policyBody))
-	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(http.StatusBadRequest, "request rejected", policyBody))
+	require.True(t, svc.shouldFailoverOpenAIUpstreamResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadRequest, "request rejected", policyBody))
 	require.True(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, http.StatusBadRequest, policyBody))
 	require.True(t, openAIStreamFailedEventShouldFailover(streamBody, "request rejected"))
 	require.True(t, openAIStreamErrorEventShouldFailover(streamBody, "request rejected"))
@@ -61,7 +61,7 @@ func TestOpenAIShortInputPolicyClassificationRequiresStructuredCode(t *testing.T
 			body := []byte(tt.body)
 			require.False(t, isOpenAIShortInputPolicyError(tt.statusCode, body))
 			if tt.statusCode == http.StatusBadRequest {
-				require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(tt.statusCode, "", body))
+				require.False(t, (&OpenAIGatewayService{}).shouldFailoverOpenAIUpstreamResponse(&Account{Type: AccountTypeAPIKey}, tt.statusCode, "", body))
 				require.False(t, shouldFailoverOpenAIPassthroughResponse(&Account{Type: AccountTypeAPIKey}, tt.statusCode, body))
 			}
 		})
