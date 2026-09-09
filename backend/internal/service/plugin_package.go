@@ -141,6 +141,7 @@ func (i *PluginPackageInstaller) Install(ctx context.Context, reader io.Reader, 
 	if err := i.extractArchive(ctx, &archive.Reader, manifest, extractPath); err != nil {
 		return nil, err
 	}
+	// Windows 不允许重命名仍被打开的文件，提交前先释放 ZIP 读取器。
 	if err := archive.Close(); err != nil {
 		return nil, fmt.Errorf("关闭插件归档: %w", err)
 	}
