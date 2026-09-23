@@ -79,32 +79,26 @@ func isAcceptableFingerprintUserAgent(ua string) bool {
 	return major <= currentMajor+maxClaudeCLIMajorVersionSkew
 }
 
-// floorClaudeCLIUserAgentVersion 把 claude-cli UA 中的版本号抬升到 claude.CLICurrentVersion
-// 下限：低于下限时就地升到下限并返回 changed=true，否则原样返回。
+// floorClaudeCLIUserAgentVersion 把 claude-cli UA 中的版本号抬升到 claude.CLIVersion()
+// （内置基线 + SUB2API_CLAUDE_CLI_VERSION 覆盖）下限：低于下限时就地升到下限并返回
+// changed=true，否则原样返回。
 //
-// 为什么需要这条：账号级指纹"只升不降"、活跃账号懒续期后近乎永不过期，且系统内没有重置
-// 入口，defaultFingerprint 只在首次创建指纹时使用。存量账号缓存里的 claude-cli 版本停留在
-// 历史值（如 claude-cli/2.1.220），客户端送来更旧的版本时 isNewerVersion 不会触发升级——
-// 仅升 CLICurrentVersion 常量对所有已有账号完全无效，上游按指纹 UA 做客户端版本闸门
-// （如 Fable 5.1 要求 >= 2.1.251）时旧指纹永远过不去。
-//
-// 约束：
-//   - 只对 claude-cli 产品生效，其它产品一律不动，避免误伤别的合法客户端；
-//   - 只升不降：版本等于或高于 CLICurrentVersion（含客户端上报的更新版本）时不做任何改动；
-//   - 只替换 claude-cli/ 后的版本号段，UA 其余部分（如 "(external, claude-desktop-3p,
-//     agent-sdk/0.3.100)"）原样保留，不重建整个字符串、不退化为 defaultFingerprint.UserAgent；
-//   - X-Stainless-* 字段不在此处理，维持调用方的既有 merge 语义。
+// 本地补丁（opus-5-5）：原实现固定使用常量 CLICurrentVersion，导致设置
+// SUB2API_CLAUDE_CLI_VERSION 覆盖后存量账号的持久指纹仍只能抬到内置基线（2.1.258），
+// 而 cc_version/billing header 从指纹 UA 提取版本，版本闸门（如 opus-5-5 要求
+// >= 2.1.280）依旧拒绝。改为使用 CLIVersion() 与请求头伪装版本保持一致。
 func floorClaudeCLIUserAgentVersion(ua string) (string, bool) {
 	if extractProduct(ua) != claudeCLIUserAgentProduct {
 		return ua, false
 	}
-	floorUA := claudeCLIUserAgentProduct + "/" + claude.CLICurrentVersion
+	effectiveVersion := claude.CLIVersion()
+	floorUA := claudeCLIUserAgentProduct + "/" + effectiveVersion
 	// isNewerVersion(floor, ua) 为 true 当且仅当下限版本严格高于 ua：
 	// ua 等于或高于下限、产品名不一致、或版本无法解析时都不做改动。
 	if !isNewerVersion(floorUA, ua) {
 		return ua, false
 	}
-	floored := claudeCLIUAVersionPrefixRegex.ReplaceAllString(ua, "${1}/"+claude.CLICurrentVersion)
+	floored := claudeCLIUAVersionPrefixRegex.ReplaceAllString(ua, "${1}/"+effectiveVersion)
 	if floored == ua {
 		return ua, false
 	}
@@ -115,7 +109,7 @@ func floorClaudeCLIUserAgentVersion(ua string) (string, bool) {
 var defaultFingerprint = Fingerprint{
 	UserAgent:               "claude-cli/" + claude.CLIVersion() + " (external, cli)",
 	StainlessLang:           "js",
-	StainlessPackageVersion: "0.94.0",
+	StainlessPackageVersion: "0.112.1",
 	StainlessOS:             "Linux",
 	StainlessArch:           "arm64",
 	StainlessRuntime:        "node",
