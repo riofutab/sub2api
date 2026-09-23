@@ -124,7 +124,17 @@ func applyResponsesReasoningToAnthropic(out *AnthropicRequest, model, requestedE
 			Type:         "enabled",
 			BudgetTokens: budget,
 		}
+		return
 	}
+
+	// 目录外的 claude-* 仍然不发可选 reasoning 字段：Anthropic 会对不认识的
+	// 模型拒收 output_config.effort。别家实现的 Anthropic 协议端点
+	//（kimi / glm / deepseek / minimax 等）不在这条风险里，沉默反而会让
+	// 客户端请求的档位既不转发给上游、也不进计费。
+	if strings.HasPrefix(modelID, "claude-") {
+		return
+	}
+	out.OutputConfig = &AnthropicOutputConfig{Effort: effort}
 }
 
 // ReapplyResponsesReasoningToAnthropic recalculates optional reasoning fields
