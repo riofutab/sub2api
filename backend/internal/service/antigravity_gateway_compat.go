@@ -212,7 +212,20 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 	}
 
-	mappedModel := s.getMappedModel(account, request.originalModel)
+	// 兼容层先解析成 apicompat.AnthropicRequest，此处把 thinking 配置转成 antigravity
+	// 的同构类型，让上游变体选择与 Gemini 原生路径落到同一档位。
+	var requestThinking *antigravity.ThinkingConfig
+	if anthropicRequest.Thinking != nil {
+		requestThinking = &antigravity.ThinkingConfig{
+			Type:         anthropicRequest.Thinking.Type,
+			BudgetTokens: anthropicRequest.Thinking.BudgetTokens,
+		}
+	}
+	mappedModel := s.getMappedModelForThinkingLevel(
+		account,
+		request.originalModel,
+		geminiThinkingLevelFromClaudeThinking(requestThinking),
+	)
 	if mappedModel == "" {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		message := fmt.Sprintf("model %s not in whitelist", request.originalModel)
