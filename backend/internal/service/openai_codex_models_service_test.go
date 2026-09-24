@@ -3786,6 +3786,7 @@ func TestGPT6SolLunaCatalogKeepsAuthoritativeCapabilities(t *testing.T) {
 		require.Equal(t, float64(900000), models[0]["max_context_window"])
 		require.Equal(t, []any{map[string]any{"id": "ultrafast"}}, models[0]["service_tiers"])
 		require.Equal(t, false, models[0]["supports_search_tool"])
+		require.Contains(t, models[0], "apply_patch_tool_type")
 		require.Nil(t, models[0]["apply_patch_tool_type"])
 	}
 }
