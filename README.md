@@ -453,6 +453,23 @@ docker compose -f docker-compose.local.yml down
 rm -rf data/ postgres_data/ redis_data/
 ```
 
+#### Claude Code Client Version Override
+
+Anthropic gates some newer models on the Claude Code client version reported by
+the account identity (for example `claude-opus-5-5` requires `claude-cli`
+>= `2.1.280`, otherwise upstream replies with
+`claude_code_version_too_old`). The mimicked version defaults to the builtin
+pin and can be raised without rebuilding via:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SUB2API_CLAUDE_CLI_VERSION` | builtin pin (see `CLICurrentVersion` in `backend/internal/pkg/claude/constants.go`) | Optional override for the Claude Code client identity sent upstream (User-Agent, billing attribution `cc_version`, and persisted account fingerprints). Strict three-part semver; a value below the builtin pin is dropped. Must match the version actually used by the pinned mimicry baseline. |
+
+Add it to the `environment:` list of the `sub2api` service in your
+`docker-compose.yml` (see the bundled deploy compose file) or export it for
+source deployments. Once set, the value must stay consistent across restarts:
+persisted account fingerprints treat it as a floor and are only ever raised.
+
 ---
 
 ### Method 3: Apple container (macOS)
@@ -725,7 +742,10 @@ go generate ./cmd/server
 Simple Mode is designed for individual developers or internal teams who want quick access without full SaaS features.
 
 - Enable: Set environment variable `RUN_MODE=simple`
+- Default groups are seeded on each startup. Set `SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS=false` (or YAML `simple_mode.auto_create_default_groups: false`) to manage groups yourself. The default is `true`; disabling it does not delete existing groups or change runtime auto-binding or admin concurrency setup.
 - Difference: Hides SaaS-related features and skips billing process
+- Optional key windows: Set `SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED=true` to enforce each API key's configured 5-hour, daily, and 7-day spending windows. The default is `false`; balance and subscription debit remain bypassed when enabled.
+- Window enforcement uses the database as its source of truth and records only API-key window usage. It is a post-request soft cap, so concurrent in-flight requests can overshoot by their final costs. Historical simple-mode usage is not backfilled.
 - Security note: In production, you must also set `SIMPLE_MODE_CONFIRM=true` to allow startup
 
 ---

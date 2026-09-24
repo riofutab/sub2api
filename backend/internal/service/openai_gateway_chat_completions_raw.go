@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -80,10 +81,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		// anchored to the client's stable conversation prefix.
 		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
 	}
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
-	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
-	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
-
+	if openai.IsGPT6SolOrLunaModelSpelling(upstreamModel) && (len(gjson.GetBytes(body, "tools").Array()) > 0 || len(gjson.GetBytes(body, "functions").Array()) > 0) && gjson.GetBytes(body, "reasoning_effort").String() != "none" {
+		err := fmt.Errorf("%s requires Responses for tool calls with reasoning; this account only supports Chat Completions. Use reasoning_effort=none or a Responses-capable account", upstreamModel)
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
 	// 3. Rewrite model in body (no protocol conversion)
 	upstreamBody := body
 	if upstreamModel != originalModel {
@@ -188,6 +190,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = defaultGrokUpstreamUserAgent()
 	}
+	// Record the final provider-normalized effort, so usage and pricing match
+	// the outbound request (for example GLM xhigh is forwarded as max).
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(upstreamBody, upstreamModel, billingModel, originalModel)
+	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, upstreamBody, upstreamModel)
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
 	if err != nil {
 		return nil, err
@@ -299,6 +305,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	var streamError error
+	var eventType string
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -334,8 +342,35 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		refusalDetector.ObserveSSELine(line)
+		if name, ok := extractOpenAISSEEventLine(line); ok {
+			eventType = name
+		}
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
+			payloadBytes := []byte(payload)
+			payloadType := strings.TrimSpace(gjson.Get(payload, "type").String())
+			if gjson.Get(payload, "error").IsObject() || payloadType == "response.failed" || eventType == "error" || eventType == "response.failed" {
+				message := extractOpenAISSEErrorMessage(payloadBytes)
+				shouldFailover := openAIStreamErrorEventShouldFailover(payloadBytes, message)
+				if payloadType == "response.failed" || eventType == "response.failed" {
+					shouldFailover = openAIStreamFailedEventShouldFailover(payloadBytes, message)
+				}
+				if !clientOutputStarted && !clientDisconnected && shouldFailover {
+					return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payloadBytes, message, upstreamModel, resp.Header)
+				}
+				message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
+				streamError = fmt.Errorf("upstream response failed: %s", message)
+				// Discard the buffered preamble, but preserve the raw error event.
+				if !clientOutputStarted {
+					pendingLines = pendingLines[:0]
+					if eventType != "" {
+						pendingLines = append(pendingLines, "event: "+eventType)
+					}
+				}
+				refusalDetector.sawError = true
+			}
+			// Event names alone must not release a preamble before the error
+			// payload has been classified for failover.
+			refusalDetector.ObservePayload(payloadBytes)
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
@@ -353,8 +388,17 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 
+		line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
 		writeLine(line)
+		if streamError != nil {
+			writeLine("")
+			if !clientDisconnected {
+				c.Writer.Flush()
+			}
+			break
+		}
 		if line == "" {
+			eventType = ""
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
 			}
@@ -382,6 +426,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 		}
+	}
+
+	if streamError != nil {
+		return resultWithUsage(), streamError
 	}
 
 	scanErr := scanner.Err()
@@ -523,6 +571,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	respBody = s.replaceModelInResponseBody(respBody, upstreamModel, originalModel)
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -455,6 +456,9 @@ func TestForwardAsRawChatCompletions_NormalizesGLMReasoningEffortForUpstream(t *
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
+	require.Equal(t, 3.0, reasoningEffortBillingMultiplier(*result.ReasoningEffort, map[string]float64{"xhigh": 2, "max": 3}))
 }
 
 func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T) {
@@ -493,6 +497,64 @@ func TestForwardAsRawChatCompletions_SilentRefusalTriggersFailover(t *testing.T)
 	require.True(t, IsOpenAISilentRefusalErrorBody(failoverErr.ResponseBody))
 	require.False(t, c.Writer.Written(), "silent refusal must not commit a 200 response before failover")
 	require.Empty(t, rec.Body.String())
+}
+
+func TestForwardAsRawChatCompletions_StreamErrorFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name     string
+		event    string
+		payload  string
+		content  bool
+		failover bool
+	}{
+		{name: "bare overload", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "named overload", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, failover: true},
+		{name: "response failed", event: "response.failed", payload: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"try again later"}}}`, failover: true},
+		{name: "after content", event: "error", payload: `{"error":{"type":"server_is_overloaded","message":"try again later"}}`, content: true},
+		{name: "invalid request", event: "error", payload: `{"error":{"type":"invalid_request_error","message":"invalid request"}}`},
+		{name: "context window", payload: `{"error":{"code":"context_length_exceeded","message":"input exceeds the context window"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			lines := []string{`data: {"id":"chatcmpl_overloaded","object":"chat.completion.chunk","model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant"}}]}`, ""}
+			if tc.content {
+				lines = append(lines, `data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}`, "")
+			}
+			if tc.event != "" {
+				lines = append(lines, "event: "+tc.event)
+			}
+			lines = append(lines, "data: "+tc.payload, "", "data: [DONE]", "")
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(strings.Join(lines, "\n"))),
+			}}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+			require.Error(t, err)
+			var failoverErr *UpstreamFailoverError
+			require.Equal(t, tc.failover, errors.As(err, &failoverErr))
+			if tc.failover {
+				require.Nil(t, result)
+				require.False(t, c.Writer.Written(), "role preamble must remain buffered before failover")
+				require.Empty(t, rec.Body.String())
+			} else {
+				require.NotNil(t, result)
+				require.Contains(t, rec.Body.String(), "data: "+tc.payload+"\n\n")
+				require.NotContains(t, rec.Body.String(), "[DONE]")
+				if tc.content {
+					require.Contains(t, rec.Body.String(), "partial")
+				} else {
+					require.NotContains(t, rec.Body.String(), "chatcmpl_overloaded")
+				}
+			}
+		})
+	}
 }
 
 func TestForwardAsRawChatCompletions_SilentRefusalToolCallsExempt(t *testing.T) {
@@ -1239,4 +1301,40 @@ func largeRawChatCompletionsBody() []byte {
 	return []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` +
 		strings.Repeat("x", openAISilentRefusalMinRequestBodyBytes) +
 		`"}],"stream":true}`)
+}
+
+func TestForwardAsRawChatCompletions_RestoresMappedResponseModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, stream := range []bool{false, true} {
+		for _, mapped := range []bool{false, true} {
+			for _, returned := range []string{"zhipu/glm-5.3", "glm-5.3-alias"} {
+				t.Run(fmt.Sprintf("stream=%v/mapped=%v/%s", stream, mapped, returned), func(t *testing.T) {
+					body := []byte(fmt.Sprintf(`{"model":"public","messages":[{"role":"user","content":"hello"}],"stream":%v}`, stream))
+					payload := `{"id":"chatcmpl_1","model":"` + returned + `","choices":[{"index":0,"delta":{"content":"keep alias"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+					upstreamBody, contentType := payload, "application/json"
+					if stream {
+						upstreamBody = "data: " + payload + "\n\ndata: [DONE]\n\n"
+						contentType = "text/event-stream"
+					}
+					upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {contentType}}, Body: io.NopCloser(strings.NewReader(upstreamBody))}}
+					svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+					account := rawChatCompletionsTestAccount()
+					expectedModel, expectedUpstream := returned, "public"
+					if mapped {
+						account.Credentials["model_mapping"] = map[string]any{"public": "ZHIPU/GLM-5.3"}
+						expectedModel = "public"
+						expectedUpstream = "ZHIPU/GLM-5.3"
+					}
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+					result, err := svc.forwardAsRawChatCompletions(context.Background(), c, account, body, "")
+					require.NoError(t, err)
+					require.Equal(t, expectedUpstream, gjson.GetBytes(upstream.lastBody, "model").String())
+					require.Contains(t, rec.Body.String(), strings.Replace(payload, `"model":"`+returned+`"`, `"model":"`+expectedModel+`"`, 1))
+					require.Equal(t, returned, result.UpstreamResponseModel)
+				})
+			}
+		}
+	}
 }

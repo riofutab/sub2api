@@ -385,9 +385,13 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 		}
 	}
 
-	// 先尝试临时不可调度规则（401除外）
-	// 如果匹配成功，直接返回，不执行后续禁用逻辑
-	if statusCode != 401 {
+	// 国产 Coding Plan 明确报告 5h/weekly 配额耗尽时，窗口重置是上游给出的
+	// 恢复边界，不能被一个过宽的账号临时规则缩短；动态 429 才允许使用账号规则。
+	cnQuota429 := statusCode == http.StatusTooManyRequests &&
+		account.IsCNProvider() && account.IsCodingPlan() &&
+		isCNProviderQuotaExhausted429(account, responseBody)
+	// 先尝试临时不可调度规则（401除外）。如果匹配成功，直接返回，不执行后续禁用逻辑。
+	if statusCode != 401 && !cnQuota429 {
 		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel)) {
 			return true
 		}
@@ -1039,6 +1043,15 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		)
 		return false
 	}
+	if isCloudflareBotBlockResponse(responseBody) {
+		slog.Warn(
+			"openai_403_cloudflare_bot_block_skips_account_penalty",
+			"account_id", account.ID,
+			"platform", account.Platform,
+			"upstream_message", upstreamMsg,
+		)
+		return false
+	}
 
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
@@ -1082,6 +1095,14 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		"threshold", openAI403DisableThreshold,
 	)
 	return true
+}
+
+// isCloudflareBotBlockResponse reports Cloudflare's WAF bot-signature response
+// (error code 1010). The upstream never reached the account API, so this is a
+// request/edge-level failure and must not consume the account 403 strike budget.
+func isCloudflareBotBlockResponse(body []byte) bool {
+	normalized := strings.ToLower(strings.TrimSpace(string(body)))
+	return strings.Contains(normalized, "error code: 1010")
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
@@ -2451,6 +2472,7 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 
 const upstreamModelNotFoundCooldown = 30 * time.Minute
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
+const upstreamModelNotFound401Reason = "upstream_401_model_not_found"
 const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
@@ -2476,6 +2498,8 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	switch {
 	case isUpstreamModelNotFoundError(statusCode, responseBody):
 		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
+	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
+		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
 	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
 		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
 	default:
