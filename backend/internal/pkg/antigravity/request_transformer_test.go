@@ -870,6 +870,20 @@ func TestBuildParts_ToolResultWithMappedIDKeepsFunctionResponse(t *testing.T) {
 	require.Equal(t, "toolu_9", funcResp.ID)
 }
 
+func TestBuildParts_DocumentBecomesInlineData(t *testing.T) {
+	content := `[
+		{"type":"text","text":"read this"},
+		{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}
+	]`
+	parts, stripped, err := buildParts(json.RawMessage(content), map[string]string{}, true)
+	require.NoError(t, err)
+	require.False(t, stripped)
+	require.Len(t, parts, 2)
+	require.NotNil(t, parts[1].InlineData)
+	require.Equal(t, "application/pdf", parts[1].InlineData.MimeType)
+	require.Equal(t, "JVBERi0=", parts[1].InlineData.Data)
+}
+
 // TestToolConfigAlwaysPresent ensures toolConfig is always emitted, including for
 // reasoning models without any tools: upstream rejects requests that omit it.
 func TestToolConfigAlwaysPresent(t *testing.T) {
