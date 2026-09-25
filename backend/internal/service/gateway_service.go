@@ -786,6 +786,7 @@ type GatewayService struct {
 	userGroupRateResolver *userGroupRateResolver
 	userGroupRateCache    *gocache.Cache
 	userGroupRateSF       singleflight.Group
+	windowCostPrefetchSF  singleflight.Group // 按"账号集合+窗口起点"合并并发的窗口费用聚合回源
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
 	settingService        *SettingService

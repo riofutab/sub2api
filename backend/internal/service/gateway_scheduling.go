@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	mathrand "math/rand"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1277,34 +1279,69 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 		return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
 	}
 
-	batchReader, hasBatch := s.usageLogRepo.(usageLogWindowStatsBatchProvider)
 	for startKey, ids := range missingByStart {
-		startTime := startTimes[startKey]
+		for accountID, cost := range s.loadWindowCostsShared(ctx, ids, startTimes[startKey]) {
+			costs[accountID] = cost
+		}
+	}
 
-		if hasBatch {
-			windowCostPrefetchBatchSQLTotal.Add(1)
-			queryStart := time.Now()
-			statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, startTime)
-			if err == nil {
-				slog.Debug("window_cost_batch_query_ok",
-					"accounts", len(ids),
-					"window_start", startTime.Format(time.RFC3339),
-					"duration_ms", time.Since(queryStart).Milliseconds())
-				for _, accountID := range ids {
-					stats := statsByAccount[accountID]
-					cost := 0.0
-					if stats != nil {
-						cost = stats.StandardCost
-					}
-					costs[accountID] = cost
-					_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+	return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+}
+
+// loadWindowCostsShared 对同一"账号集合+窗口起点"的并发未命中只回源一次：
+// 首个请求执行聚合查询并一次性回写缓存，其余请求等待并复用结果。
+// 回源使用去掉取消信号的 ctx，避免首个请求断开导致其它等待者一起失败；
+// 等待者自身 ctx 取消时直接返回空结果（上层按失败开放处理）。
+func (s *GatewayService) loadWindowCostsShared(ctx context.Context, ids []int64, startTime time.Time) map[int64]float64 {
+	sortedIDs := slices.Clone(ids)
+	slices.Sort(sortedIDs)
+	var key strings.Builder
+	key.WriteString(strconv.FormatInt(startTime.Unix(), 10))
+	for _, id := range sortedIDs {
+		key.WriteByte(':')
+		key.WriteString(strconv.FormatInt(id, 10))
+	}
+
+	ch := s.windowCostPrefetchSF.DoChan(key.String(), func() (any, error) {
+		return s.loadWindowCosts(context.WithoutCancel(ctx), sortedIDs, startTime), nil
+	})
+	select {
+	case res := <-ch:
+		loaded, _ := res.Val.(map[int64]float64)
+		return loaded
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// loadWindowCosts 回源查询窗口费用并批量回写缓存。返回的 map 只读（可能被多个等待者共享）。
+func (s *GatewayService) loadWindowCosts(ctx context.Context, ids []int64, startTime time.Time) map[int64]float64 {
+	costs := make(map[int64]float64, len(ids))
+	loaded := false
+	if batchReader, ok := s.usageLogRepo.(usageLogWindowStatsBatchProvider); ok {
+		windowCostPrefetchBatchSQLTotal.Add(1)
+		queryStart := time.Now()
+		statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, startTime)
+		if err == nil {
+			slog.Debug("window_cost_batch_query_ok",
+				"accounts", len(ids),
+				"window_start", startTime.Format(time.RFC3339),
+				"duration_ms", time.Since(queryStart).Milliseconds())
+			for _, accountID := range ids {
+				cost := 0.0
+				if stats := statsByAccount[accountID]; stats != nil {
+					cost = stats.StandardCost
 				}
-				continue
+				costs[accountID] = cost
 			}
+			loaded = true
+		} else {
 			windowCostPrefetchErrorTotal.Add(1)
 			logger.LegacyPrintf("service.gateway", "window_cost batch db query failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
 		}
+	}
 
+	if !loaded {
 		// 回退路径：缺少批量仓储能力或批量查询失败时，按账号单查（失败开放）。
 		windowCostPrefetchFallbackTotal.Add(int64(len(ids)))
 		for _, accountID := range ids {
@@ -1313,13 +1350,16 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 				windowCostPrefetchErrorTotal.Add(1)
 				continue
 			}
-			cost := stats.StandardCost
-			costs[accountID] = cost
-			_ = s.sessionLimitCache.SetWindowCost(ctx, accountID, cost)
+			costs[accountID] = stats.StandardCost
 		}
 	}
 
-	return context.WithValue(ctx, windowCostPrefetchContextKey, costs)
+	if len(costs) > 0 {
+		if err := s.sessionLimitCache.SetWindowCostBatch(ctx, costs); err != nil {
+			logger.LegacyPrintf("service.gateway", "window_cost batch cache write failed: start=%s err=%v", startTime.Format(time.RFC3339), err)
+		}
+	}
+	return costs
 }
 
 // isAccountSchedulableForQuota 检查账号是否在配额限制内
