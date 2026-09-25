@@ -17,6 +17,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // 重试相关常量
@@ -346,9 +347,17 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 解析 TLS 指纹 profile（同一请求生命周期内不变，避免重试循环中重复解析）
 	tlsProfile := s.tlsFPProfileService.ResolveTLSProfile(account)
 
-	// 调试日志：记录即将转发的账号信息
-	logger.LegacyPrintf("service.gateway", "[Forward] Using account: ID=%d Name=%s Platform=%s Type=%s TLSFingerprint=%v Proxy=%s",
-		account.ID, account.Name, account.Platform, account.Type, tlsProfile, proxyURL)
+	// 调试日志：记录即将转发的账号信息。代理只记 ID，代理 URL 可能带账号密码。
+	if ce := logger.L().Check(zap.DebugLevel, "[Forward] Using account"); ce != nil {
+		tlsProfileName := ""
+		if tlsProfile != nil {
+			tlsProfileName = tlsProfile.Name
+		}
+		ce.Write(zap.String("component", "service.gateway"), zap.Int64("account_id", account.ID),
+			zap.String("account_name", account.Name), zap.String("platform", account.Platform),
+			zap.String("account_type", account.Type), zap.String("tls_profile", tlsProfileName),
+			zap.Int64p("proxy_id", account.ProxyID), zap.Bool("proxy_enabled", proxyURL != ""))
+	}
 	// Pre-filter: strip empty text blocks (including nested in tool_result) to prevent upstream 400.
 	if err := replaceBody(StripEmptyTextBlocks(body)); err != nil {
 		return nil, err
