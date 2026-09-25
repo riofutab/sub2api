@@ -694,7 +694,7 @@ func TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly(t *testin
 		for i := range contents {
 			raw, err := json.Marshal(contents[i])
 			require.NoError(t, err)
-			b.Write(raw)
+			_, _ = b.Write(raw)
 		}
 		return b.String()
 	}
