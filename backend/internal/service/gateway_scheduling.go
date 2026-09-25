@@ -1296,10 +1296,10 @@ func (s *GatewayService) loadWindowCostsShared(ctx context.Context, ids []int64,
 	sortedIDs := slices.Clone(ids)
 	slices.Sort(sortedIDs)
 	var key strings.Builder
-	key.WriteString(strconv.FormatInt(startTime.Unix(), 10))
+	_, _ = key.WriteString(strconv.FormatInt(startTime.Unix(), 10))
 	for _, id := range sortedIDs {
-		key.WriteByte(':')
-		key.WriteString(strconv.FormatInt(id, 10))
+		_ = key.WriteByte(':')
+		_, _ = key.WriteString(strconv.FormatInt(id, 10))
 	}
 
 	ch := s.windowCostPrefetchSF.DoChan(key.String(), func() (any, error) {
