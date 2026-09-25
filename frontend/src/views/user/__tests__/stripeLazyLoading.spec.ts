@@ -21,13 +21,11 @@ describe('Stripe lazy-loading contract', () => {
     expect(source).not.toMatch(/await import\(['"]@stripe\/stripe-js['"]\)/)
   })
 
-  it('keeps Stripe out of the shared vendor chunk', () => {
+  it('has no catch-all vendor chunk that would pull Stripe into shared dependencies', () => {
     const viteConfig = readFrontendFile('vite.config.ts')
-    const stripeRule = viteConfig.indexOf("id.includes('/@stripe/stripe-js/')")
-    const miscFallback = viteConfig.indexOf("return 'vendor-misc'")
 
-    expect(stripeRule).toBeGreaterThan(-1)
-    expect(viteConfig.slice(stripeRule, miscFallback)).toContain("return 'vendor-stripe'")
-    expect(stripeRule).toBeLessThan(miscFallback)
+    // 未被手动规则命中的第三方库交给 Rollup 按引用关系分包，Stripe 只会出现在动态 import 的异步 chunk 中
+    expect(viteConfig).not.toContain("return 'vendor-misc'")
+    expect(viteConfig).not.toContain('/@stripe/')
   })
 })
