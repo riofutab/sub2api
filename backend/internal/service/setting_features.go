@@ -549,21 +549,39 @@ func (s *SettingService) GetTencentCaptchaConfig(ctx context.Context) TencentCap
 
 // IsIdentityPatchEnabled 检查是否启用身份补丁（Claude -> Gemini systemInstruction 注入）
 func (s *SettingService) IsIdentityPatchEnabled(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyEnableIdentityPatch)
-	if err != nil {
-		// 默认开启，保持兼容
-		return true
-	}
-	return value == "true"
+	return s.getIdentityPatchSettings(ctx).enabled
 }
 
 // GetIdentityPatchPrompt 获取自定义身份补丁提示词（为空表示使用内置默认模板）
 func (s *SettingService) GetIdentityPatchPrompt(ctx context.Context) string {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyIdentityPatchPrompt)
-	if err != nil {
-		return ""
-	}
-	return value
+	return s.getIdentityPatchSettings(ctx).prompt
+}
+
+// getIdentityPatchSettings 在 antigravity 每次请求都会调用，走进程内缓存。
+func (s *SettingService) getIdentityPatchSettings(ctx context.Context) identityPatchSettings {
+	return s.identityPatchSettingsCache.get(func() (identityPatchSettings, bool) {
+		dbCtx, cancel := hotPathSettingDBContext(ctx)
+		defer cancel()
+		// 默认开启，保持兼容；读取失败（含不存在）也按开启处理。
+		result := identityPatchSettings{enabled: true}
+		cacheable := true
+		if value, err := s.settingRepo.GetValue(dbCtx, SettingKeyEnableIdentityPatch); err == nil {
+			result.enabled = value == "true"
+		} else if !errors.Is(err, ErrSettingNotFound) {
+			cacheable = false
+		}
+		if value, err := s.settingRepo.GetValue(dbCtx, SettingKeyIdentityPatchPrompt); err == nil {
+			result.prompt = value
+		} else if !errors.Is(err, ErrSettingNotFound) {
+			cacheable = false
+		}
+		return result, cacheable
+	})
+}
+
+// invalidateIdentityPatchSettingsCache 在系统设置写入后调用。
+func (s *SettingService) invalidateIdentityPatchSettingsCache() {
+	s.identityPatchSettingsCache.invalidate()
 }
 
 // GenerateAdminAPIKey 生成新的管理员 API Key
@@ -909,8 +927,19 @@ func (s *SettingService) IsBudgetRectifierEnabled(ctx context.Context) bool {
 	return settings.Enabled && settings.ThinkingBudgetEnabled
 }
 
-// GetBetaPolicySettings 获取 Beta 策略配置
+// GetBetaPolicySettings 获取 Beta 策略配置。
+// Anthropic 非透传请求每次都会调用，走进程内缓存；返回值在多个请求间共享，调用方只读不改。
 func (s *SettingService) GetBetaPolicySettings(ctx context.Context) (*BetaPolicySettings, error) {
+	result := s.betaPolicySettingsCache.get(func() (betaPolicySettingsResult, bool) {
+		dbCtx, cancel := hotPathSettingDBContext(ctx)
+		defer cancel()
+		settings, err := s.loadBetaPolicySettings(dbCtx)
+		return betaPolicySettingsResult{settings: settings, err: err}, err == nil
+	})
+	return result.settings, result.err
+}
+
+func (s *SettingService) loadBetaPolicySettings(ctx context.Context) (*BetaPolicySettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyBetaPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -972,11 +1001,26 @@ func (s *SettingService) SetBetaPolicySettings(ctx context.Context, settings *Be
 		return fmt.Errorf("marshal beta policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyBetaPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyBetaPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.betaPolicySettingsCache.invalidate()
+	return nil
 }
 
-// GetOpenAIFastPolicySettings 获取 OpenAI fast 策略配置
+// GetOpenAIFastPolicySettings 获取 OpenAI fast 策略配置。
+// OpenAI 请求热路径会调用，走进程内缓存；返回值在多个请求间共享，调用方只读不改。
 func (s *SettingService) GetOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
+	result := s.openAIFastPolicySettingsCache.get(func() (openAIFastPolicySettingsResult, bool) {
+		dbCtx, cancel := hotPathSettingDBContext(ctx)
+		defer cancel()
+		settings, err := s.loadOpenAIFastPolicySettings(dbCtx)
+		return openAIFastPolicySettingsResult{settings: settings, err: err}, err == nil
+	})
+	return result.settings, result.err
+}
+
+func (s *SettingService) loadOpenAIFastPolicySettings(ctx context.Context) (*OpenAIFastPolicySettings, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIFastPolicySettings)
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -1062,7 +1106,11 @@ func (s *SettingService) SetOpenAIFastPolicySettings(ctx context.Context, settin
 		return fmt.Errorf("marshal openai fast policy settings: %w", err)
 	}
 
-	return s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data))
+	if err := s.settingRepo.Set(ctx, SettingKeyOpenAIFastPolicySettings, string(data)); err != nil {
+		return err
+	}
+	s.openAIFastPolicySettingsCache.invalidate()
+	return nil
 }
 
 // SetStreamTimeoutSettings 设置流超时处理配置
