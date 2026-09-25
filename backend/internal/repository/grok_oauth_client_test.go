@@ -134,3 +134,9 @@ func TestNewGrokOAuthClient_UnvalidatedTokenURLFallsBackToDefault(t *testing.T) 
 	client := NewGrokOAuthClient().(*grokOAuthClient)
 	require.Equal(t, xai.DefaultTokenURL, client.tokenURL)
 }
+
+func TestCreateGrokHTTPClient_InvalidProxyErrorDoesNotLeakCredentials(t *testing.T) {
+	_, err := createGrokHTTPClient("http://user:s3cret@host:80%zz/", false)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "s3cret")
+}

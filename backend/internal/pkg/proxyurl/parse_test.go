@@ -213,3 +213,18 @@ func TestParse_无Scheme裸地址(t *testing.T) {
 		t.Fatal("无 scheme 的裸地址应返回错误")
 	}
 }
+
+func TestParse_MalformedURLErrorDoesNotLeakCredentials(t *testing.T) {
+	for _, raw := range []string{
+		"http://user:s3cret@host:80%zz/",
+		"http://user:s3cret pass@host:80/",
+	} {
+		_, _, err := Parse(raw)
+		if err == nil {
+			t.Fatalf("expected error for %q", raw)
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Fatalf("error leaks credentials: %v", err)
+		}
+	}
+}
