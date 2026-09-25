@@ -42,7 +42,14 @@ type RateLimitService struct {
 	// OpenAI Team 联动熔断的进程内去重：teamID → 去重窗口截止时间
 	openaiTeamLinkedMu     sync.Mutex
 	openaiTeamLinkedRecent map[string]time.Time
+
+	// passiveUsageThrottle 限制成功响应上被动采样（utilization/reset）的写库频率，按账号节流。
+	passiveUsageThrottle *accountWriteThrottle
 }
+
+// anthropicPassiveUsagePersistMinInterval 是同一账号成功响应被动采样写库的最小间隔。
+// 阈值暂停依据的 utilization 在 DB/调度快照中的最大滞后即为该值（状态变化与窗口重置不受限）。
+const anthropicPassiveUsagePersistMinInterval = 30 * time.Second
 
 type AccountRuntimeBlocker interface {
 	BlockAccountScheduling(account *Account, until time.Time, reason string)
@@ -105,6 +112,8 @@ func NewRateLimitService(accountRepo AccountRepository, usageRepo UsageLogReposi
 		geminiQuotaService: geminiQuotaService,
 		tempUnschedCache:   tempUnschedCache,
 		usageCache:         make(map[int64]*geminiUsageCacheEntry),
+
+		passiveUsageThrottle: newAccountWriteThrottle(anthropicPassiveUsagePersistMinInterval),
 	}
 }
 
@@ -2032,7 +2041,8 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 	}
 
 	// 窗口重置时清除旧的 utilization 和被动采样数据，避免残留上个窗口的数据
-	if windowEnd != nil && needInitWindow {
+	windowReset := windowEnd != nil && needInitWindow
+	if windowReset {
 		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
 			"session_window_utilization":      nil,
 			"passive_usage_7d_utilization":    nil,
@@ -2043,12 +2053,18 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		})
 	}
 
-	if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, windowStart, windowEnd, status); err != nil {
-		slog.Warn("session_window_update_failed", "account_id", account.ID, "error", err)
+	// 状态与窗口都没变时这次 UPDATE 是空操作，跳过；变化必须立即落库。
+	statusChanged := account.SessionWindowStatus != status
+	if statusChanged || windowEnd != nil {
+		if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, windowStart, windowEnd, status); err != nil {
+			slog.Warn("session_window_update_failed", "account_id", account.ID, "error", err)
+		}
 	}
 
-	// 被动采样：从响应头收集 5h + 7d + 7d_oi utilization，合并为一次 DB 写入
-	s.samplePassiveUsageFromHeaders(ctx, account, headers)
+	// 被动采样：从响应头收集 5h + 7d + 7d_oi utilization，合并为一次 DB 写入。
+	// 值未变化时不写；变化时按账号节流。状态变化/窗口变化时强制写入，
+	// 顺带让 UpdateExtra 刷新调度快照中的单账号数据（UpdateSessionWindow 仅在窗口变化时入 outbox）。
+	s.persistPassiveUsageFromSuccessHeaders(ctx, account, headers, statusChanged || windowEnd != nil)
 
 	// 如果状态为allowed且之前有限流，说明窗口已重置，清除限流状态
 	if status == "allowed" && account.IsRateLimited() {
@@ -2061,6 +2077,72 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 // samplePassiveUsageFromHeaders 从 Anthropic 响应头收集 5h/7d/7d_oi 的
 // utilization 与 reset 被动采样数据，合并为一次 Extra 写入。无数据时不写。
 func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, account *Account, headers http.Header) {
+	extraUpdates := passiveUsageUpdatesFromHeaders(headers)
+	if len(extraUpdates) > 0 {
+		s.writePassiveUsage(ctx, account, extraUpdates)
+	}
+}
+
+// persistPassiveUsageFromSuccessHeaders 是成功响应路径的被动采样写入：
+// 与已持久化值（account.Extra，来自调度快照/DB）一致则跳过；否则按账号节流；force 时不节流。
+func (s *RateLimitService) persistPassiveUsageFromSuccessHeaders(ctx context.Context, account *Account, headers http.Header, force bool) {
+	extraUpdates := passiveUsageUpdatesFromHeaders(headers)
+	if len(extraUpdates) == 0 {
+		return
+	}
+	if !force {
+		if passiveUsageUnchanged(account.Extra, extraUpdates) {
+			return
+		}
+		if !s.passiveUsageThrottle.Allow(account.ID, time.Now()) {
+			return
+		}
+	}
+	s.writePassiveUsage(ctx, account, extraUpdates)
+}
+
+func (s *RateLimitService) writePassiveUsage(ctx context.Context, account *Account, extraUpdates map[string]any) {
+	extraUpdates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
+		slog.Warn("passive_usage_update_failed", "account_id", account.ID, "error", err)
+	}
+}
+
+// passiveUsageUnchanged 比较采样值与已存储值；数值统一按 float64 比较（快照里的 extra 经 JSON 解码为 float64）。
+func passiveUsageUnchanged(stored map[string]any, updates map[string]any) bool {
+	for key, next := range updates {
+		prev, ok := stored[key]
+		if !ok {
+			return false
+		}
+		prevNum, prevOK := passiveUsageNumber(prev)
+		nextNum, nextOK := passiveUsageNumber(next)
+		if !prevOK || !nextOK || prevNum != nextNum {
+			return false
+		}
+	}
+	return true
+}
+
+func passiveUsageNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
+// passiveUsageUpdatesFromHeaders 解析 5h/7d/7d_oi 的 utilization 与 reset，不含 sampled_at。
+func passiveUsageUpdatesFromHeaders(headers http.Header) map[string]any {
 	extraUpdates := make(map[string]any, 6)
 	// 5h utilization（0-1 小数），供 estimateSetupTokenUsage 使用
 	if utilStr := headers.Get("anthropic-ratelimit-unified-5h-utilization"); utilStr != "" {
@@ -2098,12 +2180,7 @@ func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, ac
 			extraUpdates["passive_usage_7d_oi_reset"] = ts
 		}
 	}
-	if len(extraUpdates) > 0 {
-		extraUpdates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
-		if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
-			slog.Warn("passive_usage_update_failed", "account_id", account.ID, "error", err)
-		}
-	}
+	return extraUpdates
 }
 
 // ClearRateLimit 清除账号的限流状态
