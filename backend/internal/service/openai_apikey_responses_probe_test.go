@@ -80,7 +80,9 @@ func TestProbeOpenAIAPIKeyResponsesSupportOfficialHost(t *testing.T) {
 			upstream := &httpUpstreamRecorder{resp: &http.Response{
 				StatusCode: http.StatusNotFound,
 				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"model_not_found"}}`)),
+				// A plain 404 means the endpoint is absent; a model_not_found body would be
+				// inconclusive and never reach UpdateExtra.
+				Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Not Found"}}`)),
 			}}
 			svc := &AccountTestService{
 				accountRepo:  repo,
