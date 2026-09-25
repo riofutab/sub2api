@@ -370,6 +370,9 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   applyFilters()
 }
 
+// 导出逐页拉取的页大小，取后端分页上限（response.ParsePagination 允许的最大 page_size）
+const EXPORT_PAGE_SIZE = 1000
+
 const buildUsageListParams = (
   page: number,
   pageSize: number,
@@ -593,10 +596,11 @@ const exportToExcel = async () => {
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
-      const res = await adminUsageAPI.list(
-        buildUsageListParams(p, 100, true),
-        { signal: c.signal }
-      )
+      // 只有第一页要精确总数；后续页带 skip_total 跳过 COUNT，进度与终止条件用第一页的 total。
+      const pageParams: AdminUsageQueryParams & { skip_total?: boolean } = p === 1
+        ? buildUsageListParams(p, EXPORT_PAGE_SIZE, true)
+        : { ...buildUsageListParams(p, EXPORT_PAGE_SIZE, false), skip_total: true }
+      const res = await adminUsageAPI.list(pageParams, { signal: c.signal })
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
       const rows = (res.items || []).map((log: AdminUsageLog) => [
         log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
@@ -616,7 +620,7 @@ const exportToExcel = async () => {
       exportedCount += rows.length
       exportProgress.current = exportedCount
       exportProgress.progress = total > 0 ? Math.min(100, Math.round(exportedCount / total * 100)) : 0
-      if (exportedCount >= total || res.items.length < 100) break; p++
+      if (exportedCount >= total || res.items.length < EXPORT_PAGE_SIZE) break; p++
     }
     if(!c.signal.aborted) {
       const wb = XLSX.utils.book_new()

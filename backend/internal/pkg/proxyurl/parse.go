@@ -7,6 +7,7 @@
 package proxyurl
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -41,7 +42,11 @@ func Parse(raw string) (trimmed string, parsed *url.URL, err error) {
 
 	parsed, err = url.Parse(trimmed)
 	if err != nil {
-		// 不使用 %w 包装，避免 url.Parse 的底层错误消息泄漏原始 URL（可能含凭据）
+		// *url.Error 的 Error() 会带上原始 URL（可能含凭据），只保留内层原因。
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return "", nil, fmt.Errorf("invalid proxy URL: %v", err)
 	}
 

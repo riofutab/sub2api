@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
+	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -26,6 +28,9 @@ func MarkOpenAINativeCompactionV2(c *gin.Context) {
 // the final Responses input item, as required by the upstream v2 wire format.
 func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
+		return body, false, nil
+	}
+	if !mayContainCompactionTrigger(body) && compactionPrecheckDecodesCleanly(body) {
 		return body, false, nil
 	}
 	var payload map[string]any
@@ -61,6 +66,45 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 		return body, false, err
 	}
 	return encoded, true, nil
+}
+
+var (
+	compactionTriggerMarker = []byte("compaction_trigger")
+	jsonEscapePrefixASCII   = []byte(`\u00`)
+)
+
+// JSONMayContainEscapedLetter 报告请求体里是否可能有以 \uXXXX 转义的 ASCII 字母或下划线。
+// 这些字符（0x41-0x7A）的转义形式只能是 \u00[4-7]X；返回 false 时，原始字节里找不到的
+// 纯字母/下划线标记（如 "codex_app"）解码后也不会出现。不含 0x3X 段：encoding/json 默认把 < > 转义成
+// u003c/u003e 形式，纳入会让大量请求白白走慢路径。可能误报（例如被转义的反斜杠后跟 u0061），不会漏报。
+func JSONMayContainEscapedLetter(body []byte) bool {
+	for rest := body; ; {
+		i := bytes.Index(rest, jsonEscapePrefixASCII)
+		if i < 0 || i+len(jsonEscapePrefixASCII) >= len(rest) {
+			return false
+		}
+		switch rest[i+len(jsonEscapePrefixASCII)] {
+		case '4', '5', '6', '7':
+			return true
+		}
+		rest = rest[i+len(jsonEscapePrefixASCII):]
+	}
+}
+
+// mayContainCompactionTrigger 字节预检：原始字节里既没有 compaction_trigger 也没有被转义的
+// ASCII 字母时，解码后不可能出现 type=compaction_trigger 的输入项。
+func mayContainCompactionTrigger(body []byte) bool {
+	return bytes.Contains(body, compactionTriggerMarker) || JSONMayContainEscapedLetter(body)
+}
+
+// compactionPrecheckDecodesCleanly 判断跳过解码时能否保持原有错误语义：
+// 解码到 map 只接受单个合法 JSON 的对象或 null，其余情况交给完整解码返回原错误。
+func compactionPrecheckDecodesCleanly(body []byte) bool {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != 'n') {
+		return false
+	}
+	return gjson.ValidBytes(body)
 }
 
 func isOpenAINativeCompactionV2(c *gin.Context) bool {
@@ -163,10 +207,11 @@ func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Heade
 // request path and stream flag to distinguish the native remote compaction v2
 // wire from the legacy /responses/compact bridge.
 func HasCompactionTriggerInInput(body []byte) bool {
-	if len(body) == 0 {
+	if len(body) == 0 || !mayContainCompactionTrigger(body) {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	// 零拷贝读取：GetBytes 会复制整段 input，这里的结果只在函数内使用。
+	input := gjson.Get(unsafe.String(unsafe.SliceData(body), len(body)), "input")
 	if !input.IsArray() {
 		return false
 	}

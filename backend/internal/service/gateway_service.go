@@ -786,6 +786,7 @@ type GatewayService struct {
 	userGroupRateResolver *userGroupRateResolver
 	userGroupRateCache    *gocache.Cache
 	userGroupRateSF       singleflight.Group
+	windowCostPrefetchSF  singleflight.Group // 按"账号集合+窗口起点"合并并发的窗口费用聚合回源
 	modelsListCache       *gocache.Cache
 	modelsListCacheTTL    time.Duration
 	settingService        *SettingService
@@ -897,7 +898,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	if parsed.MetadataUserID != "" {
 		uid := ParseMetadataUserID(parsed.MetadataUserID)
 		if uid != nil && uid.SessionID != "" {
-			slog.Info("sticky.hash_source",
+			slog.Debug("sticky.hash_source",
 				"source", "metadata_user_id",
 				"session_id", uid.SessionID,
 				"device_id", uid.DeviceID,
@@ -905,7 +906,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 			)
 			return uid.SessionID
 		}
-		slog.Info("sticky.hash_metadata_parse_failed",
+		slog.Debug("sticky.hash_metadata_parse_failed",
 			"metadata_user_id", parsed.MetadataUserID,
 			"parsed_nil", uid == nil,
 		)
@@ -915,7 +916,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	cacheableContent := s.extractCacheableContent(parsed)
 	if cacheableContent != "" {
 		hash := s.hashContent(cacheableContent)
-		slog.Info("sticky.hash_source",
+		slog.Debug("sticky.hash_source",
 			"source", "cacheable_content",
 			"hash", hash,
 		)
@@ -943,7 +944,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	}
 	if combined.Len() > 0 {
 		hash := s.hashContent(combined.String())
-		slog.Info("sticky.hash_source",
+		slog.Debug("sticky.hash_source",
 			"source", "message_content_fallback",
 			"hash", hash,
 			"content_len", combined.Len(),

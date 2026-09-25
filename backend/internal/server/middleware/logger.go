@@ -78,11 +78,12 @@ func Logger() gin.HandlerFunc {
 			fields = append(fields, zap.String("model", model))
 		}
 
-		l := logger.FromContext(c.Request.Context()).With(fields...)
-		l.Info("http request completed", zap.Time("completed_at", endTime))
+		// 字段直接随日志传入而不是 With：With 会为每个请求克隆一遍各输出 core 的编码器。
+		l := logger.FromContext(c.Request.Context())
+		l.Info("http request completed", append(fields, zap.Time("completed_at", endTime))...)
 
 		if len(c.Errors) > 0 {
-			l.Warn("http request contains gin errors", zap.String("errors", c.Errors.String()))
+			l.Warn("http request contains gin errors", append(fields, zap.String("errors", c.Errors.String()))...)
 		}
 	}
 }

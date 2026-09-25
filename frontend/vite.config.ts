@@ -109,8 +109,9 @@ export default defineConfig(({ mode }) => {
     rollupOptions: {
       output: {
         /**
-         * 手动分包配置
-         * 分离第三方库并按功能合并应用代码，避免循环依赖
+         * 手动分包只固定首屏必需的 Vue / i18n 与多页面共用的图表库；
+         * 其余第三方库交给 Rollup 按实际引用关系自动分包，
+         * 避免按需依赖（xlsx、支付 SDK 等）被合并进首屏或无关路由的静态依赖。
          */
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
@@ -124,13 +125,8 @@ export default defineConfig(({ mode }) => {
               return 'vendor-vue'
             }
 
-            // UI 工具库（较大，单独分离）
-            if (id.includes('/@vueuse/') || id.includes('/xlsx/')) {
-              return 'vendor-ui'
-            }
-
-            // 图表库
-            if (id.includes('/chart.js/') || id.includes('/vue-chartjs/')) {
+            // 图表库（@kurkle/color 是 chart.js 的依赖）
+            if (id.includes('/chart.js/') || id.includes('/vue-chartjs/') || id.includes('/@kurkle/color/')) {
               return 'vendor-chart'
             }
 
@@ -138,14 +134,6 @@ export default defineConfig(({ mode }) => {
             if (id.includes('/vue-i18n/') || id.includes('/@intlify/')) {
               return 'vendor-i18n'
             }
-
-            // Stripe 仅在支付流程中按需加载，避免进入首页公共依赖。
-            if (id.includes('/@stripe/stripe-js/')) {
-              return 'vendor-stripe'
-            }
-
-            // 其他小型第三方库合并
-            return 'vendor-misc'
           }
 
           // 应用代码：按入口点自动分包，不手动干预

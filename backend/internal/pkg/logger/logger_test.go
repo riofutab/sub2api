@@ -73,6 +73,8 @@ func TestInit_DualOutput(t *testing.T) {
 	stderrBytes, _ := io.ReadAll(stderrR)
 	stdoutText := string(stdoutBytes)
 	stderrText := string(stderrBytes)
+	// 文件输出带缓冲，读文件前需刷盘；此时管道写端已关闭，Sync 不会在管道上阻塞。
+	Sync()
 
 	if !strings.Contains(stdoutText, "dual-output-info") {
 		t.Fatalf("stdout missing info log: %s", stdoutText)

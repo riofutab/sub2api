@@ -86,6 +86,8 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 // it omitted, so in that case the caches are rebuilt from storage rather than
 // from the request struct.
 func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, settings *SystemSettings, omitted OmittedSettingKeys) {
+	// 写入已落库即失效，不依赖下面的重建是否成功。
+	s.invalidateIdentityPatchSettingsCache()
 	if len(omitted) == 0 {
 		s.refreshCachedSettings(settings)
 		return

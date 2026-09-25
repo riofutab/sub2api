@@ -1,5 +1,6 @@
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { h } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DataTable from '../DataTable.vue'
 
@@ -356,5 +357,100 @@ describe('DataTable', () => {
     await wrapper.get('[data-test="select-all-mobile"]').setValue(true)
 
     expect(wrapper.emitted('update:selectedKeys')?.at(-1)?.[0]).toEqual([99, 1, 2])
+  })
+
+  describe('渲染次数', () => {
+    let resizeCallbacks: ResizeObserverCallback[] = []
+
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    const triggerResize = () => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+    }
+
+    const mountCountingTable = (rowCount: number) => {
+      let actionSlotCalls = 0
+      const data = Array.from({ length: rowCount }, (_, i) => ({ id: i + 1, name: `Row ${i + 1}` }))
+      const wrapper = mount(DataTable, {
+        props: {
+          columns: [
+            { key: 'name', label: 'Name' },
+            { key: 'actions', label: 'Actions' }
+          ],
+          data,
+          rowKey: 'id'
+        },
+        slots: {
+          // 每次 DataTable 渲染都会为每一行调用一次该插槽
+          'cell-actions': () => {
+            actionSlotCalls += 1
+            return h('div', [h('button', 'a'), h('button', 'b'), h('button', 'c')])
+          }
+        }
+      })
+      return {
+        wrapper,
+        data,
+        slotCalls: () => actionSlotCalls
+      }
+    }
+
+    beforeEach(() => {
+      resizeCallbacks = []
+      vi.stubGlobal('ResizeObserver', class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      })
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('一次尺寸变化不会触发整表重渲染', async () => {
+      const table = mountCountingTable(5)
+      await flushPromises()
+      await nextFrame()
+      const before = table.slotCalls()
+
+      triggerResize()
+      await flushPromises()
+      await nextFrame()
+
+      expect((table.slotCalls() - before) / table.data.length).toBe(0)
+    })
+
+    it('尺寸变化在下一帧更新横向滚动状态', async () => {
+      const table = mountCountingTable(5)
+      await flushPromises()
+      const wrapperEl = table.wrapper.get('.table-wrapper').element as HTMLElement
+      Object.defineProperty(wrapperEl, 'scrollWidth', { configurable: true, value: 800 })
+      Object.defineProperty(wrapperEl, 'clientWidth', { configurable: true, value: 400 })
+
+      triggerResize()
+      triggerResize()
+      await nextFrame()
+      await flushPromises()
+
+      expect(table.wrapper.get('.table-wrapper').classes()).toContain('is-scrollable')
+    })
+
+    it('数据变化只触发一次渲染', async () => {
+      const table = mountCountingTable(5)
+      await flushPromises()
+      await nextFrame()
+      const before = table.slotCalls()
+      const nextData = [...table.data, { id: 6, name: 'Row 6' }]
+
+      await table.wrapper.setProps({ data: nextData })
+      await flushPromises()
+      await nextFrame()
+
+      expect((table.slotCalls() - before) / nextData.length).toBe(1)
+    })
   })
 })

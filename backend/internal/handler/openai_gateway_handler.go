@@ -1653,7 +1653,24 @@ func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
 	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
 }
 
+var (
+	codexAppNamespaceMarker = []byte("codex_app")
+	codexTUINamespaceMarker = []byte("codex_tui")
+)
+
+// mayContainCodexBootstrapCandidate 是 bootstrap 归一化的字节预检：候选项的 namespace 必须是
+// codex_app 或 codex_tui。原始字节里既没有这两个标记、也没有被转义的 ASCII 字母时，
+// 解码后不可能出现候选项，可以跳过整体解码。
+func mayContainCodexBootstrapCandidate(body []byte) bool {
+	return bytes.Contains(body, codexAppNamespaceMarker) ||
+		bytes.Contains(body, codexTUINamespaceMarker) ||
+		service.JSONMayContainEscapedLetter(body)
+}
+
 func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
+	if !mayContainCodexBootstrapCandidate(body) {
+		return body, false
+	}
 	if !hasUniqueJSONMembers(body) {
 		return body, false
 	}

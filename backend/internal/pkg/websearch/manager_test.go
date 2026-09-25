@@ -321,3 +321,9 @@ func TestManager_ResetUsage_NilRedis(t *testing.T) {
 	err := m.ResetUsage(context.Background(), "brave")
 	require.NoError(t, err)
 }
+
+func TestNewHTTPClient_InvalidProxyErrorDoesNotLeakCredentials(t *testing.T) {
+	_, err := newHTTPClient("http://user:s3cret@host:80%zz/")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "s3cret")
+}

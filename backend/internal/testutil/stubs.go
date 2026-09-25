@@ -157,6 +157,9 @@ func (c StubSessionLimitCache) GetWindowCost(_ context.Context, _ int64) (float6
 func (c StubSessionLimitCache) SetWindowCost(_ context.Context, _ int64, _ float64) error {
 	return nil
 }
+func (c StubSessionLimitCache) SetWindowCostBatch(_ context.Context, _ map[int64]float64) error {
+	return nil
+}
 func (c StubSessionLimitCache) GetWindowCostBatch(_ context.Context, _ []int64) (map[int64]float64, error) {
 	return nil, nil
 }

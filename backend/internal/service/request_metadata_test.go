@@ -117,3 +117,32 @@ func TestRequestMetadataRead_PreferMetadataOverLegacy(t *testing.T) {
 	require.True(t, thinking)
 	require.Equal(t, false, ctx.Value(ctxkey.ThinkingEnabled))
 }
+
+func TestResolveSingleAccountRetry_LazyResolverRunsOnceAndOnlyWhenAsked(t *testing.T) {
+	calls := 0
+	ctx := WithSingleAccountRetryResolver(context.Background(), func(context.Context) bool {
+		calls++
+		return true
+	})
+	require.Zero(t, calls, "attaching the resolver must not evaluate it")
+
+	require.True(t, ResolveSingleAccountRetry(ctx))
+	require.True(t, isSingleAccountRetry(ctx))
+	require.Equal(t, 1, calls)
+
+	_, explicit := SingleAccountRetryFromContext(ctx)
+	require.False(t, explicit, "lazy resolver must not masquerade as an explicit flag")
+}
+
+func TestResolveSingleAccountRetry_ExplicitFlagWinsOverResolver(t *testing.T) {
+	calls := 0
+	ctx := WithSingleAccountRetryResolver(context.Background(), func(context.Context) bool {
+		calls++
+		return false
+	})
+	ctx = WithSingleAccountRetry(ctx, true, false)
+
+	require.True(t, ResolveSingleAccountRetry(ctx))
+	require.Zero(t, calls)
+	require.False(t, ResolveSingleAccountRetry(context.Background()))
+}

@@ -799,4 +799,26 @@ describe('admin UsageView model audit export', () => {
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
+
+	it('requests the exact total only for the first export page', async () => {
+		const fullPage = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, created_at: '2026-08-04T00:00:00Z', model: 'm', request_type: 'sync', input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, duration_ms: 1 }))
+		exportList.mockReset()
+			.mockResolvedValueOnce({ items: fullPage, total: 2500, pages: 3 })
+			.mockResolvedValueOnce({ items: fullPage, total: 2001, pages: 3 })
+			.mockResolvedValueOnce({ items: fullPage.slice(0, 500), total: 2500, pages: 3 })
+		const wrapper = mountRouteFilteredUsageView()
+		vi.advanceTimersByTime(120)
+		await flushPromises()
+
+		await (wrapper.vm as any).exportToExcel()
+		await flushPromises()
+
+		const params = exportList.mock.calls.map((call) => call[0])
+		expect(params).toHaveLength(3)
+		expect(params[0]).toMatchObject({ page: 1, page_size: 1000, exact_total: true })
+		expect(params[0]).not.toHaveProperty('skip_total')
+		expect(params[1]).toMatchObject({ page: 2, page_size: 1000, exact_total: false, skip_total: true })
+		expect(params[2]).toMatchObject({ page: 3, page_size: 1000, exact_total: false, skip_total: true })
+		expect(saveAs).toHaveBeenCalledTimes(1)
+	})
 })

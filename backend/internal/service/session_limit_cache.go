@@ -64,6 +64,9 @@ type SessionLimitCache interface {
 	// SetWindowCost 设置窗口费用缓存
 	SetWindowCost(ctx context.Context, accountID int64, cost float64) error
 
+	// SetWindowCostBatch 批量设置窗口费用缓存，一次往返写完
+	SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error
+
 	// GetWindowCostBatch 批量获取窗口费用缓存
 	// 返回 map[accountID]cost，缓存未命中的账号不在 map 中
 	GetWindowCostBatch(ctx context.Context, accountIDs []int64) (map[int64]float64, error)

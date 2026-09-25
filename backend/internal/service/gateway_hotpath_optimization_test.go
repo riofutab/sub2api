@@ -107,6 +107,15 @@ func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, accoun
 	return nil
 }
 
+func (s *sessionLimitCacheHotpathStub) SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error {
+	for accountID, cost := range costs {
+		if err := s.SetWindowCost(ctx, accountID, cost); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type modelsListAccountRepoStub struct {
 	AccountRepository
 

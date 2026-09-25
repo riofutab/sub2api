@@ -53,6 +53,8 @@ type OpsSystemLogSink struct {
 
 const maxSystemLogHostLength = 255
 
+var _ logger.SinkFilter = (*OpsSystemLogSink)(nil)
+
 const (
 	// 首次写入失败后暂停落库的时长，之后逐次翻倍到上限。
 	defaultOpsSystemLogFlushBackoff = 2 * time.Second
@@ -158,24 +160,29 @@ func (s *OpsSystemLogSink) SetPersistAccessLogs(enabled bool) {
 }
 
 func (s *OpsSystemLogSink) shouldIndex(event *logger.LogEvent) bool {
-	if event != nil && event.Fields != nil {
-		if skip, _ := event.Fields[logger.OpsSystemLogSkipField].(bool); skip {
-			return false
+	skip := false
+	component := event.Component
+	// zap 的 LoggerName 往往为空或不等于业务组件名；业务组件名通常以字段 component 透传。
+	if event.Fields != nil {
+		skip, _ = event.Fields[logger.OpsSystemLogSkipField].(bool)
+		if fc := asString(event.Fields["component"]); fc != "" {
+			component = fc
 		}
 	}
-	level := strings.ToLower(strings.TrimSpace(event.Level))
-	switch level {
+	return s.AcceptsLogEntry(event.Level, component, skip)
+}
+
+// AcceptsLogEntry 实现 logger.SinkFilter：logger 在编码字段前据此丢弃不需要索引的事件。
+func (s *OpsSystemLogSink) AcceptsLogEntry(level, component string, skip bool) bool {
+	if s == nil || skip {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "warn", "warning", "error", "fatal", "panic", "dpanic":
 		return true
 	}
 
-	component := strings.ToLower(strings.TrimSpace(event.Component))
-	// zap 的 LoggerName 往往为空或不等于业务组件名；业务组件名通常以字段 component 透传。
-	if event.Fields != nil {
-		if fc := strings.ToLower(strings.TrimSpace(asString(event.Fields["component"]))); fc != "" {
-			component = fc
-		}
-	}
+	component = strings.ToLower(strings.TrimSpace(component))
 	if strings.Contains(component, "http.access") {
 		return s.persistAccessLogs.Load()
 	}

@@ -153,6 +153,11 @@ type SettingService struct {
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
 
+	// 网关热路径设置缓存（见 setting_hot_path_cache.go）。
+	betaPolicySettingsCache       hotPathSettingCache[betaPolicySettingsResult]
+	openAIFastPolicySettingsCache hotPathSettingCache[openAIFastPolicySettingsResult]
+	identityPatchSettingsCache    hotPathSettingCache[identityPatchSettings]
+
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
 }

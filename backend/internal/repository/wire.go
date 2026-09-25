@@ -121,6 +121,7 @@ var ProviderSet = wire.NewSet(
 	NewUserRPMCache,
 	NewUserMsgQueueCache,
 	NewDashboardCache,
+	NewUsageDashboardStatsCache,
 	NewEmailCache,
 	NewIdentityCache,
 	NewRedeemCache,

@@ -1,5 +1,15 @@
 import type { Account } from '@/types'
 
+/**
+ * 批量用量请求选项。
+ * - force：后端跳过探测缓存、真实探测上游，只用于用户显式刷新。
+ * - bypassCache：只跳过前端批量缓存，后端仍走探测缓存，用于行数据变化后的刷新。
+ */
+export interface BatchedUsageRequestOptions {
+  force?: boolean
+  bypassCache?: boolean
+}
+
 const normalizeUsageRefreshValue = (value: unknown): string => {
   if (value == null) return ''
   return String(value)
@@ -29,7 +39,9 @@ const isNonBlankString = (value: unknown): value is string => (
   typeof value === 'string' && value.trim().length > 0
 )
 
-export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platform' | 'type' | 'updated_at' | 'last_used_at' | 'rate_limit_reset_at' | 'extra'>): string => {
+// 不含 last_used_at / codex_usage_updated_at：它们随每次调用或每次上游探测变化，
+// 纳入 key 会让自动刷新每轮都重拉用量。
+export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platform' | 'type' | 'updated_at' | 'rate_limit_reset_at' | 'extra'>): string => {
   if (account.platform !== 'openai' || account.type !== 'oauth') {
     return ''
   }
@@ -38,9 +50,7 @@ export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platfo
   return [
     account.id,
     account.updated_at,
-    account.last_used_at,
     account.rate_limit_reset_at,
-    extra.codex_usage_updated_at,
     extra.codex_5h_used_percent,
     extra.codex_5h_reset_at,
     extra.codex_5h_reset_after_seconds,

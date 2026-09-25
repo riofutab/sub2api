@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -31,7 +32,14 @@ const (
 
 	// 窗口费用缓存 TTL（30秒）
 	windowCostCacheTTL = 30 * time.Second
+
+	// 窗口费用缓存 TTL 的随机抖动上限：各批次/实例写入的 key 错开过期，避免同一时刻集中回源聚合
+	windowCostCacheTTLJitter = 10 * time.Second
 )
+
+func windowCostCacheTTLWithJitter() time.Duration {
+	return windowCostCacheTTL + time.Duration(rand.Int64N(int64(windowCostCacheTTLJitter)))
+}
 
 var (
 	// registerSessionScript 注册会话活动
@@ -324,7 +332,22 @@ func (c *sessionLimitCache) GetWindowCost(ctx context.Context, accountID int64) 
 // SetWindowCost 设置窗口费用缓存
 func (c *sessionLimitCache) SetWindowCost(ctx context.Context, accountID int64, cost float64) error {
 	key := windowCostKey(accountID)
-	return c.rdb.Set(ctx, key, cost, windowCostCacheTTL).Err()
+	return c.rdb.Set(ctx, key, cost, windowCostCacheTTLWithJitter()).Err()
+}
+
+// SetWindowCostBatch 用一次 pipeline 写入多个账号的窗口费用；同一批次共用一个抖动后的 TTL，
+// 让同组账号一起过期，配合 service 层 singleflight 合并回源。
+func (c *sessionLimitCache) SetWindowCostBatch(ctx context.Context, costs map[int64]float64) error {
+	if len(costs) == 0 {
+		return nil
+	}
+	ttl := windowCostCacheTTLWithJitter()
+	pipe := c.rdb.Pipeline()
+	for accountID, cost := range costs {
+		pipe.Set(ctx, windowCostKey(accountID), cost, ttl)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // GetWindowCostBatch 批量获取窗口费用缓存

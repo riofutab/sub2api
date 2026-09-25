@@ -10,6 +10,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -60,15 +61,18 @@ type UsageService struct {
 	userRepo             UserRepository
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
+	dashboardCache       UsageDashboardStatsCache
+	dashboardSF          singleflight.Group
 }
 
 // NewUsageService 创建使用统计服务实例
-func NewUsageService(usageRepo UsageLogRepository, userRepo UserRepository, entClient *dbent.Client, authCacheInvalidator APIKeyAuthCacheInvalidator) *UsageService {
+func NewUsageService(usageRepo UsageLogRepository, userRepo UserRepository, entClient *dbent.Client, authCacheInvalidator APIKeyAuthCacheInvalidator, dashboardCache UsageDashboardStatsCache) *UsageService {
 	return &UsageService{
 		usageRepo:            usageRepo,
 		userRepo:             userRepo,
 		entClient:            entClient,
 		authCacheInvalidator: authCacheInvalidator,
+		dashboardCache:       dashboardCache,
 	}
 }
 
@@ -291,7 +295,9 @@ func (s *UsageService) Delete(ctx context.Context, id int64) error {
 
 // GetUserDashboardStats returns per-user dashboard summary stats.
 func (s *UsageService) GetUserDashboardStats(ctx context.Context, userID int64) (*usagestats.UserDashboardStats, error) {
-	stats, err := s.usageRepo.GetUserDashboardStats(ctx, userID)
+	stats, err := s.cachedUsageDashboardStats(ctx, usageDashboardScopeUser, userID, func(ctx context.Context) (*usagestats.UserDashboardStats, error) {
+		return s.usageRepo.GetUserDashboardStats(ctx, userID)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get user dashboard stats: %w", err)
 	}
@@ -300,7 +306,9 @@ func (s *UsageService) GetUserDashboardStats(ctx context.Context, userID int64) 
 
 // GetAPIKeyDashboardStats returns dashboard summary stats filtered by API Key.
 func (s *UsageService) GetAPIKeyDashboardStats(ctx context.Context, apiKeyID int64) (*usagestats.UserDashboardStats, error) {
-	stats, err := s.usageRepo.GetAPIKeyDashboardStats(ctx, apiKeyID)
+	stats, err := s.cachedUsageDashboardStats(ctx, usageDashboardScopeAPIKey, apiKeyID, func(ctx context.Context) (*usagestats.UserDashboardStats, error) {
+		return s.usageRepo.GetAPIKeyDashboardStats(ctx, apiKeyID)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get api key dashboard stats: %w", err)
 	}

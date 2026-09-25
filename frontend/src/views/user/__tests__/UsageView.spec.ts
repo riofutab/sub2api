@@ -389,7 +389,7 @@ describe('user UsageView', () => {
 
     expect(exportedBlob).not.toBeNull()
     expect(query).toHaveBeenCalledWith(expect.objectContaining({
-      page_size: 100,
+      page_size: 1000,
       sort_by: 'created_at',
       sort_order: 'desc',
       native_compaction_v2: true,
@@ -449,7 +449,7 @@ describe('user UsageView', () => {
   })
 
   it('keeps the initial filters, sort, and filename while exporting multiple pages', async () => {
-    const pageResponse = { items: [usageLog], total: 101, pages: 2 }
+    const pageResponse = { items: [usageLog], total: 1001, pages: 2 }
     query.mockResolvedValue(pageResponse)
     const wrapper = mountUsageView()
     await flushPromises()
@@ -477,7 +477,7 @@ describe('user UsageView', () => {
       await wrapper.findAll('button').find((button) => button.text() === 'Export CSV')!.trigger('click')
       const initialParams = { ...query.mock.calls[0][0] }
       expect(initialParams).toMatchObject({
-        page: 1, page_size: 100, start_date: '2026-03-01', end_date: '2026-03-08',
+        page: 1, page_size: 1000, start_date: '2026-03-01', end_date: '2026-03-08',
         sort_by: 'created_at', sort_order: 'desc',
       })
 
@@ -498,7 +498,9 @@ describe('user UsageView', () => {
       await flushPromises()
 
       const exportCalls = query.mock.calls.filter((call) => call.length === 1)
-      expect.soft(exportCalls).toEqual([[initialParams], [{ ...initialParams, page: 2 }]])
+      // 只有第一页要精确总数，后续页带 skip_total 跳过后端 COUNT
+      expect(initialParams).not.toHaveProperty('skip_total')
+      expect.soft(exportCalls).toEqual([[initialParams], [{ ...initialParams, page: 2, skip_total: true }]])
       expect.soft(filename).toBe('usage_2026-03-01_to_2026-03-08.csv')
       expect(showSuccess).toHaveBeenCalledWith('Export success')
       expect(showError).not.toHaveBeenCalled()
