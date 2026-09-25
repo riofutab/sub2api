@@ -287,6 +287,9 @@ type UsageLogFilters struct {
 	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+	// SkipTotal 跳过 COUNT(*)，total 只表示"是否还有下一页"的估计值；优先于 ExactTotal。
+	// 供导出等已从第一页拿到总数的逐页拉取场景使用。
+	SkipTotal bool
 }
 
 // UsageStats represents usage statistics

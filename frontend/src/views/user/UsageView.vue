@@ -435,6 +435,9 @@ const normalizedFilters = computed<UsageQueryParams>(() => {
   }
 })
 
+// 导出逐页拉取的页大小，取后端分页上限（response.ParsePagination 允许的最大 page_size）
+const EXPORT_PAGE_SIZE = 1000
+
 const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams => ({
   page,
   page_size: pageSize,
@@ -641,12 +644,16 @@ const exportToCSV = async () => {
   appStore.showInfo(t('usage.preparingExport'))
   try {
     const allLogs: UsageLog[] = []
-    const pageSize = 100
-    const exportParams = buildUsageListParams(1, pageSize)
-    const totalPages = Math.ceil(pagination.total / pageSize)
-    for (let page = 1; page <= totalPages; page++) {
-      const response = await usageAPI.query({ ...exportParams, page })
+    const exportParams = buildUsageListParams(1, EXPORT_PAGE_SIZE)
+    // 只有第一页让后端做精确 COUNT，后续页带 skip_total 跳过 COUNT，总页数以第一页的 total 为准。
+    const firstPage = await usageAPI.query(exportParams)
+    allLogs.push(...firstPage.items)
+    const totalPages = Math.ceil(firstPage.total / EXPORT_PAGE_SIZE)
+    for (let page = 2; page <= totalPages; page++) {
+      const pageParams: UsageQueryParams & { skip_total: boolean } = { ...exportParams, page, skip_total: true }
+      const response = await usageAPI.query(pageParams)
       allLogs.push(...response.items)
+      if (response.items.length < EXPORT_PAGE_SIZE) break
     }
     if (allLogs.length === 0) {
       appStore.showWarning(t('usage.noDataToExport'))

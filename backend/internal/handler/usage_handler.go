@@ -238,6 +238,15 @@ func (h *UsageHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// skip_total=true 时不做 COUNT(*)，返回的 total 只是"是否还有下一页"的估计值（导出逐页拉取用）
+	if raw := strings.TrimSpace(c.Query("skip_total")); raw != "" {
+		skipTotal, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid skip_total value, use true or false")
+			return
+		}
+		parsed.Filters.SkipTotal = skipTotal
+	}
 
 	params := pagination.PaginationParams{
 		Page:      page,
