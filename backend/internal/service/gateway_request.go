@@ -135,32 +135,107 @@ func clearGatewayRequestRanges(parsed *ParsedRequest) {
 	parsed.inputRange = missingJSONRange()
 }
 
-func setGatewayRequestRanges(parsed *ParsedRequest, protocol string, jsonStr string) {
-	if parsed == nil {
+func setGatewayRequestRanges(parsed *ParsedRequest, protocol string, fields *gatewayTopLevelFields) {
+	if parsed == nil || fields == nil {
 		return
 	}
 	switch protocol {
 	case domain.PlatformGemini:
-		if sysParts := gjson.Get(jsonStr, "systemInstruction.parts"); sysParts.Exists() && sysParts.IsArray() {
-			parsed.systemRange = rangeFromResult(sysParts)
+		if fields.systemParts.Exists() && fields.systemParts.IsArray() {
+			parsed.systemRange = rangeFromResult(fields.systemParts)
 		}
-		if contents := gjson.Get(jsonStr, "contents"); contents.Exists() && contents.IsArray() {
-			parsed.messagesRange = rangeFromResult(contents)
+		if fields.contents.Exists() && fields.contents.IsArray() {
+			parsed.messagesRange = rangeFromResult(fields.contents)
 		}
 	default:
-		if sys := gjson.Get(jsonStr, "system"); sys.Exists() {
+		if fields.system.Exists() {
 			parsed.HasSystem = true
-			parsed.systemRange = rangeFromResult(sys)
+			parsed.systemRange = rangeFromResult(fields.system)
 		}
-		if msgs := gjson.Get(jsonStr, "messages"); msgs.Exists() && msgs.IsArray() {
-			parsed.messagesRange = rangeFromResult(msgs)
+		if fields.messages.Exists() && fields.messages.IsArray() {
+			parsed.messagesRange = rangeFromResult(fields.messages)
 		}
-		if protocol == "responses" {
-			if input := gjson.Get(jsonStr, "input"); input.Exists() {
-				parsed.inputRange = rangeFromResult(input)
-			}
+		if protocol == "responses" && fields.input.Exists() {
+			parsed.inputRange = rangeFromResult(fields.input)
 		}
 	}
+}
+
+// gatewayTopLevelFields 保存一次顶层遍历收集到的字段，Index 均相对整个请求体。
+type gatewayTopLevelFields struct {
+	model          gjson.Result
+	stream         gjson.Result
+	metadataUserID gjson.Result
+	thinkingType   gjson.Result
+	outputEffort   gjson.Result
+	speed          gjson.Result
+	maxTokens      gjson.Result
+	system         gjson.Result
+	messages       gjson.Result
+	input          gjson.Result
+	systemParts    gjson.Result // systemInstruction.parts（Gemini）
+	contents       gjson.Result
+}
+
+// collectGatewayTopLevelFields 用一次顶层 ForEach 代替逐字段 gjson.Get（每次 Get 都可能扫过整个
+// messages）。语义与 gjson.Get 保持一致：单段路径取第一个同名键；两段路径取第一个「内层键存在」的
+// 同名外层键（gjson 在外层键命中但内层缺失时会继续向后找重复键）。
+func collectGatewayTopLevelFields(jsonStr string) gatewayTopLevelFields {
+	var f gatewayTopLevelFields
+	trimmed := strings.TrimLeft(jsonStr, " \t\r\n")
+	if trimmed == "" || trimmed[0] != '{' {
+		return f
+	}
+	firstOf := func(dst *gjson.Result, value gjson.Result) {
+		if !dst.Exists() {
+			*dst = value
+		}
+	}
+	nestedOf := func(dst *gjson.Result, value gjson.Result, key string) {
+		if dst.Exists() {
+			return
+		}
+		inner := gjson.Get(value.Raw, key)
+		if !inner.Exists() {
+			return
+		}
+		// Index 相对 value.Raw，换算成相对整个请求体；0 表示偏移未知，保持 0 让 rangeFromResult 视为缺失。
+		if inner.Index > 0 {
+			inner.Index += value.Index
+		}
+		*dst = inner
+	}
+	root := gjson.Result{Type: gjson.JSON, Raw: jsonStr}
+	root.ForEach(func(key, value gjson.Result) bool {
+		switch key.Str {
+		case "model":
+			firstOf(&f.model, value)
+		case "stream":
+			firstOf(&f.stream, value)
+		case "metadata":
+			nestedOf(&f.metadataUserID, value, "user_id")
+		case "thinking":
+			nestedOf(&f.thinkingType, value, "type")
+		case "output_config":
+			nestedOf(&f.outputEffort, value, "effort")
+		case "speed":
+			firstOf(&f.speed, value)
+		case "max_tokens":
+			firstOf(&f.maxTokens, value)
+		case "system":
+			firstOf(&f.system, value)
+		case "messages":
+			firstOf(&f.messages, value)
+		case "input":
+			firstOf(&f.input, value)
+		case "systemInstruction":
+			nestedOf(&f.systemParts, value, "parts")
+		case "contents":
+			firstOf(&f.contents, value)
+		}
+		return true
+	})
+	return f
 }
 
 const claudeCodeLongContextModelSuffix = "[1m]"
@@ -180,6 +255,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	if parsed == nil || parsed.Body == nil {
 		return fmt.Errorf("empty request body")
 	}
+	parsed.parsedBody = nil
 
 	bodyBytes := parsed.Body.Bytes()
 	if !gjson.ValidBytes(bodyBytes) {
@@ -191,8 +267,8 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	clearGatewayRequestDerivedState(parsed)
 	parsed.protocol = protocol
 
-	modelResult := gjson.Get(jsonStr, "model")
-	if modelResult.Exists() {
+	fields := collectGatewayTopLevelFields(jsonStr)
+	if modelResult := fields.model; modelResult.Exists() {
 		if modelResult.Type != gjson.String {
 			return fmt.Errorf("invalid model field type")
 		}
@@ -208,30 +284,30 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 				bodyBytes = normalizedBody
 				jsonStr = *(*string)(unsafe.Pointer(&bodyBytes))
 				parsed.Model = normalizedModel
+				// 改写 model 会让后续字段的偏移整体移动，按新 body 重新收集（罕见路径）。
+				fields = collectGatewayTopLevelFields(jsonStr)
 			}
 		}
 	}
 
-	streamResult := gjson.Get(jsonStr, "stream")
-	if streamResult.Exists() {
+	if streamResult := fields.stream; streamResult.Exists() {
 		if streamResult.Type != gjson.True && streamResult.Type != gjson.False {
 			return fmt.Errorf("invalid stream field type")
 		}
 		parsed.Stream = streamResult.Bool()
 	}
 
-	parsed.MetadataUserID = gjson.Get(jsonStr, "metadata.user_id").String()
+	parsed.MetadataUserID = fields.metadataUserID.String()
 
-	thinkingType := gjson.Get(jsonStr, "thinking.type").String()
+	thinkingType := fields.thinkingType.String()
 	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || (protocol == domain.PlatformAnthropic && claude.IsOpus55(parsed.Model))
 
-	parsed.OutputEffort = strings.TrimSpace(gjson.Get(jsonStr, "output_config.effort").String())
+	parsed.OutputEffort = strings.TrimSpace(fields.outputEffort.String())
 	if protocol == domain.PlatformAnthropic {
-		parsed.Speed = strings.ToLower(strings.TrimSpace(gjson.Get(jsonStr, "speed").String()))
+		parsed.Speed = strings.ToLower(strings.TrimSpace(fields.speed.String()))
 	}
 
-	maxTokensResult := gjson.Get(jsonStr, "max_tokens")
-	if maxTokensResult.Exists() && maxTokensResult.Type == gjson.Number {
+	if maxTokensResult := fields.maxTokens; maxTokensResult.Exists() && maxTokensResult.Type == gjson.Number {
 		f := maxTokensResult.Float()
 		if !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f) &&
 			f <= float64(math.MaxInt) && f >= float64(math.MinInt) {
@@ -239,7 +315,9 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		}
 	}
 
-	setGatewayRequestRanges(parsed, protocol, jsonStr)
+	setGatewayRequestRanges(parsed, protocol, &fields)
+	parsed.parsedBody = bodyBytes
+	parsed.parsedModel = parsed.Model
 	return nil
 }
 
@@ -295,6 +373,11 @@ type ParsedRequest struct {
 	systemRange   jsonRange // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容
 	messagesRange jsonRange // messages/contents 的 raw JSON 范围，绑定 Body 当前内容
 	inputRange    jsonRange // Responses API input 的 raw JSON 范围，绑定 Body 当前内容
+
+	// parsedBody/parsedModel 记录最近一次成功解析的 body 切片与解析出的 Model。
+	// ReplaceBody/CloneForBody 传入同一切片且 Model 未被外部改写时，派生状态仍然有效，跳过重新解析。
+	parsedBody  []byte
+	parsedModel string
 
 	// GroupID 请求所属分组 ID（来自 API Key）
 	GroupID *int64
@@ -417,16 +500,35 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	clone := *p
 	clone.Body = NewRequestBodyRef(body)
 	clone.OnUpstreamAccepted = nil
+	if p.derivedStateMatches(body) {
+		return &clone, nil
+	}
 	if err := refreshGatewayRequestRanges(&clone, clone.protocol); err != nil {
 		return nil, err
 	}
 	return &clone, nil
 }
 
+// derivedStateMatches 判断当前派生字段是否仍对应 body：与上次成功解析的是同一底层切片
+// （首地址 + 长度相同），且 Model 未被调用方直接改写。
+// 依赖约定：body 过滤器不原地修改字节，未改动时原样返回入参切片。
+func (p *ParsedRequest) derivedStateMatches(body []byte) bool {
+	last := p.parsedBody
+	if len(body) == 0 || len(last) != len(body) || unsafe.SliceData(last) != unsafe.SliceData(body) {
+		return false
+	}
+	return p.Model == p.parsedModel
+}
+
 // ReplaceBody 统一刷新当前 body 和 raw range，保证后续 helper 读取的是最新请求体。
+// data 与上次解析的是同一切片时跳过重新解析；调用方不得原地修改 body 字节。
 func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	if p == nil {
 		return fmt.Errorf("parse request: empty request")
+	}
+	if p.Body != nil && p.derivedStateMatches(data) {
+		p.Body.Replace(data)
+		return nil
 	}
 	if p.Body == nil {
 		p.Body = NewRequestBodyRef(data)
