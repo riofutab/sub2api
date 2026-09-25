@@ -438,8 +438,20 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 		}
 
 		if role == "system" {
-			systemParts = append(systemParts, parts...)
-			continue
+			// 只有对话开始前的 system 消息才并入 systemInstruction。
+			// 对话中途出现的 system 消息（如客户端逐轮注入的状态提示）必须留在原位：
+			// systemInstruction 排在 contents 之前，把它们提到那里等于每轮都往
+			// 已有对话内容的前面插入新文本，上游前缀缓存会因此逐轮失效。
+			if len(contents) == 0 {
+				systemParts = append(systemParts, parts...)
+				continue
+			}
+			// 保持角色交替：优先并入前一个 user 轮次，否则单独成为一个 user 轮次。
+			if last := &contents[len(contents)-1]; last.Role == "user" {
+				last.Parts = append(last.Parts, parts...)
+				continue
+			}
+			role = "user"
 		}
 
 		// 只有 Gemini 模型支持 dummy thinking block workaround
@@ -532,8 +544,8 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 			}
 			parts = append(parts, part)
 
-		case "image":
-			if block.Source != nil && block.Source.Type == "base64" {
+		case "image", "document":
+			if block.Source != nil && block.Source.Type == "base64" && strings.TrimSpace(block.Source.Data) != "" {
 				parts = append(parts, GeminiPart{
 					InlineData: &GeminiInlineData{
 						MimeType: block.Source.MediaType,
@@ -655,6 +667,36 @@ const (
 	maxOutputTokensClaude     = 64000
 )
 
+// gemini3ThinkingLevel 为 Gemini 3.x 选择 thinkingLevel。
+// 模型名后缀优先；没有后缀时再用 budget 兜底。返回 false 表示不是 Gemini 3。
+func gemini3ThinkingLevel(model string, budget int) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(model))
+	if slash := strings.LastIndex(lower, "/"); slash >= 0 {
+		lower = strings.TrimSpace(lower[slash+1:])
+	}
+	if !strings.Contains(lower, "gemini-3") {
+		return "", false
+	}
+	for _, part := range strings.Split(lower, "-") {
+		switch part {
+		case "low":
+			return "low", true
+		case "medium":
+			return "medium", true
+		case "high":
+			return "high", true
+		}
+	}
+	switch {
+	case budget > 0 && budget <= 1024:
+		return "low", true
+	case budget > 1024 && budget <= 8192:
+		return "medium", true
+	default:
+		return "high", true
+	}
+}
+
 func maxOutputTokensLimit(model string) int {
 	if strings.HasPrefix(model, "claude-") {
 		return maxOutputTokensClaude
@@ -693,31 +735,37 @@ func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
 			IncludeThoughts: true,
 		}
 
-		// - thinking.type=enabled：budget_tokens>0 用显式预算
-		// - thinking.type=adaptive：在 Antigravity 的高阶 Opus（4.6+）上覆写为 （24576）
-		budget := -1
-		if req.Thinking.BudgetTokens > 0 {
-			budget = req.Thinking.BudgetTokens
-		}
-		if req.Thinking.Type == "adaptive" && isAntigravityOpusHighTierModel(req.Model) {
-			budget = ClaudeAdaptiveHighThinkingBudgetTokens
-		}
-
-		// 正预算需要做上限与 max_tokens 约束；动态预算（-1）直接透传给上游。
-		if budget > 0 {
-			// gemini-2.5-flash 上限
-			if strings.Contains(req.Model, "gemini-2.5-flash") && budget > Gemini25FlashThinkingBudgetLimit {
-				budget = Gemini25FlashThinkingBudgetLimit
+		// Gemini 3.x 用 thinkingLevel。正的 thinkingBudget 会占满 maxOutputTokens，
+		// 小的 max_tokens 会把正文截成空，上游也不稳定返回思考摘要。
+		if level, ok := gemini3ThinkingLevel(req.Model, req.Thinking.BudgetTokens); ok {
+			config.ThinkingConfig.ThinkingLevel = level
+		} else {
+			// - thinking.type=enabled：budget_tokens>0 用显式预算
+			// - thinking.type=adaptive：在 Antigravity 的高阶 Opus（4.6+）上覆写为 （24576）
+			budget := -1
+			if req.Thinking.BudgetTokens > 0 {
+				budget = req.Thinking.BudgetTokens
+			}
+			if req.Thinking.Type == "adaptive" && isAntigravityOpusHighTierModel(req.Model) {
+				budget = ClaudeAdaptiveHighThinkingBudgetTokens
 			}
 
-			// 自动修正：max_tokens 必须大于 budget_tokens（Claude 上游要求）
-			if adjusted, ok := ensureMaxTokensGreaterThanBudget(config.MaxOutputTokens, budget); ok {
-				log.Printf("[Antigravity] Auto-adjusted max_tokens from %d to %d (must be > budget_tokens=%d)",
-					config.MaxOutputTokens, adjusted, budget)
-				config.MaxOutputTokens = adjusted
+			// 正预算需要做上限与 max_tokens 约束；动态预算（-1）直接透传给上游。
+			if budget > 0 {
+				// gemini-2.5-flash 上限
+				if strings.Contains(req.Model, "gemini-2.5-flash") && budget > Gemini25FlashThinkingBudgetLimit {
+					budget = Gemini25FlashThinkingBudgetLimit
+				}
+
+				// 自动修正：max_tokens 必须大于 budget_tokens（Claude 上游要求）
+				if adjusted, ok := ensureMaxTokensGreaterThanBudget(config.MaxOutputTokens, budget); ok {
+					log.Printf("[Antigravity] Auto-adjusted max_tokens from %d to %d (must be > budget_tokens=%d)",
+						config.MaxOutputTokens, adjusted, budget)
+					config.MaxOutputTokens = adjusted
+				}
 			}
+			config.ThinkingConfig.ThinkingBudget = budget
 		}
-		config.ThinkingConfig.ThinkingBudget = budget
 	}
 
 	if config.MaxOutputTokens > maxLimit {

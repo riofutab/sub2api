@@ -664,6 +664,14 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 					Source: src,
 				})
 			}
+		case "input_file":
+			src := dataURIToAnthropicFileSource(p.FileData)
+			if src != nil {
+				blocks = append(blocks, AnthropicContentBlock{
+					Type:   "document",
+					Source: src,
+				})
+			}
 		}
 	}
 
@@ -749,6 +757,18 @@ func dataURIToAnthropicImageSource(dataURI string) *AnthropicImageSource {
 		MediaType: mediaType,
 		Data:      data,
 	}
+}
+
+// dataURIToAnthropicFileSource parses a data URI into a document source.
+// Anthropic base64 documents only accept application/pdf, so other media types
+// are dropped rather than turned into an upstream 400. file_id-only parts are
+// not convertible here and stay dropped.
+func dataURIToAnthropicFileSource(fileData string) *AnthropicImageSource {
+	src := dataURIToAnthropicImageSource(fileData)
+	if src == nil || !strings.EqualFold(src.MediaType, "application/pdf") {
+		return nil
+	}
+	return src
 }
 
 // mergeConsecutiveMessages merges consecutive messages with the same role

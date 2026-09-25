@@ -92,7 +92,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 				"message": "This account only allows Codex official clients",
 			},
 		})
-		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
+		return nil, ErrCodexClientRestricted
 	}
 
 	if account.Platform == PlatformGrok {
@@ -326,6 +326,10 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
 		}
+	}
+	responsesBody, _, err = sanitizeGPTPromptCacheHints(responsesBody, upstreamModel)
+	if err != nil {
+		return nil, fmt.Errorf("sanitize GPT prompt cache hints: %w", err)
 	}
 	// Codex transforms may normalize the model after the initial mapping pass;
 	// record the final slug immediately before policy/auth/upstream dispatch.

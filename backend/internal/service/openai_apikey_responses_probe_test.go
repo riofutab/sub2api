@@ -49,6 +49,59 @@ func TestProbeOpenAIAPIKeyResponsesSupportUsesCodexProbeHeaders(t *testing.T) {
 	require.Equal(t, true, updates[openai_compat.ExtraKeyResponsesSupported])
 }
 
+func TestProbeOpenAIAPIKeyResponsesSupportOfficialHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		baseURL     string
+		wantSupport bool
+		wantRequest bool
+	}{
+		{"default base URL", "", true, false},
+		{"official root", "https://api.openai.com", true, false},
+		{"official v1", "https://api.openai.com/v1", true, false},
+		{"lookalike host", "https://api.openai.com.example/v1", false, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			account := Account{
+				ID: 97, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":       "sk-test",
+					"base_url":      tc.baseURL,
+					"model_mapping": map[string]any{"legacy": "babbage-002"},
+				},
+			}
+			updates := make(chan map[string]any, 1)
+			repo := &snapshotUpdateAccountRepo{
+				stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+				updateExtraCalls:      updates,
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     make(http.Header),
+				// A plain 404 means the endpoint is absent; a model_not_found body would be
+				// inconclusive and never reach UpdateExtra.
+				Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Not Found"}}`)),
+			}}
+			svc := &AccountTestService{
+				accountRepo:  repo,
+				httpUpstream: upstream,
+				cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+			}
+
+			svc.ProbeOpenAIAPIKeyResponsesSupport(context.Background(), account.ID)
+
+			require.Equal(t, tc.wantSupport, (<-updates)[openai_compat.ExtraKeyResponsesSupported])
+			if tc.wantRequest {
+				require.NotNil(t, upstream.lastReq)
+			} else {
+				require.Nil(t, upstream.lastReq)
+			}
+		})
+	}
+}
+
 func TestProbeOpenAIAPIKeyResponsesSupportCNProviders(t *testing.T) {
 	tests := []struct {
 		name        string

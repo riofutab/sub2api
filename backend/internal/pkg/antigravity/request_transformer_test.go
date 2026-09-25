@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -300,6 +301,45 @@ func TestBuildTools_KeepsWebSearchWhenNoClientFunctions(t *testing.T) {
 	require.Equal(t, 5, result[0].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
 }
 
+func TestBuildGenerationConfig_Gemini3UsesThinkingLevel(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		budget    int
+		wantLevel string
+	}{
+		{name: "tiered suffix uses budget fallback", model: "gemini-3.8-flash-tiered", budget: 1024, wantLevel: "low"},
+		{name: "high suffix wins over small budget", model: "gemini-3.8-flash-high", budget: 512, wantLevel: "high"},
+		{name: "medium suffix", model: "gemini-3.6-flash-medium", budget: 20000, wantLevel: "medium"},
+		{name: "low suffix", model: "gemini-3.1-pro-low", budget: 20000, wantLevel: "low"},
+		{name: "bare id uses budget fallback low", model: "gemini-3.8-flash", budget: 1024, wantLevel: "low"},
+		{name: "bare id uses budget fallback medium", model: "gemini-3.8-flash", budget: 4096, wantLevel: "medium"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := buildGenerationConfig(&ClaudeRequest{
+				Model:     tc.model,
+				MaxTokens: 64,
+				Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: tc.budget},
+			})
+			require.NotNil(t, cfg.ThinkingConfig)
+			require.Equal(t, tc.wantLevel, cfg.ThinkingConfig.ThinkingLevel)
+			require.Zero(t, cfg.ThinkingConfig.ThinkingBudget)
+			require.Equal(t, 64, cfg.MaxOutputTokens)
+		})
+	}
+
+	legacy := buildGenerationConfig(&ClaudeRequest{
+		Model:     "gemini-2.5-flash",
+		MaxTokens: 64,
+		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 1024},
+	})
+	require.NotNil(t, legacy.ThinkingConfig)
+	require.Empty(t, legacy.ThinkingConfig.ThinkingLevel)
+	require.Equal(t, 1024, legacy.ThinkingConfig.ThinkingBudget)
+	require.Greater(t, legacy.MaxOutputTokens, legacy.ThinkingConfig.ThinkingBudget)
+}
+
 func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -524,6 +564,77 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 		require.Equal(t, "user", req.Request.Contents[0].Role)
 	})
 
+	t.Run("mid conversation system role stays in contents", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "user", Content: json.RawMessage(`"follow up"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		// 中途的 system 不得被提到 systemInstruction，否则会插到已有 contents 前面
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "follow up", req.Request.Contents[2].Parts[0].Text)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[1].Text)
+	})
+
+	t.Run("mid conversation system after assistant becomes its own user turn", func(t *testing.T) {
+		req := transform(t, &ClaudeRequest{
+			Model: "claude-3-5-sonnet-latest",
+			Messages: []ClaudeMessage{
+				{Role: "user", Content: json.RawMessage(`"question"`)},
+				{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+				{Role: "system", Content: json.RawMessage(`"turn counter"`)},
+			},
+		})
+
+		require.NotContains(t, systemText(req.Request.SystemInstruction), "turn counter")
+		require.Len(t, req.Request.Contents, 3)
+		require.Equal(t, "model", req.Request.Contents[1].Role)
+		require.Equal(t, "user", req.Request.Contents[2].Role)
+		require.Equal(t, "turn counter", req.Request.Contents[2].Parts[0].Text)
+	})
+
+	t.Run("appending a turn never rewrites the existing prefix", func(t *testing.T) {
+		base := []ClaudeMessage{
+			{Role: "user", Content: json.RawMessage(`"question"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 1"`)},
+			{Role: "assistant", Content: json.RawMessage(`"answer"`)},
+			{Role: "user", Content: json.RawMessage(`"follow up"`)},
+			{Role: "system", Content: json.RawMessage(`"counter 2"`)},
+		}
+		next := append(append([]ClaudeMessage{}, base...),
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(`"second answer"`)},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(`"more"`)},
+			ClaudeMessage{Role: "system", Content: json.RawMessage(`"counter 3"`)},
+		)
+
+		reqA := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: base})
+		reqB := transform(t, &ClaudeRequest{Model: "claude-3-5-sonnet-latest", Messages: next})
+
+		// systemInstruction 必须逐字节稳定
+		sa, err := json.Marshal(reqA.Request.SystemInstruction)
+		require.NoError(t, err)
+		sb, err := json.Marshal(reqB.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(sa), string(sb))
+
+		// 已有的 contents 必须是新一轮的前缀，不能被改写或位移
+		require.Greater(t, len(reqB.Request.Contents), len(reqA.Request.Contents))
+		for i := range reqA.Request.Contents {
+			x, err := json.Marshal(reqA.Request.Contents[i])
+			require.NoError(t, err)
+			y, err := json.Marshal(reqB.Request.Contents[i])
+			require.NoError(t, err)
+			require.Equal(t, string(x), string(y), "contents[%d] 被改写，前缀缓存会失效", i)
+		}
+	})
+
 	t.Run("ordinary user assistant conversation is unchanged", func(t *testing.T) {
 		req := transform(t, &ClaudeRequest{
 			Model: "claude-3-5-sonnet-latest",
@@ -545,6 +656,86 @@ func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 		require.Equal(t, "model", req.Request.Contents[1].Role)
 		require.Equal(t, "answer", req.Request.Contents[1].Parts[0].Text)
 	})
+}
+
+// TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly 钉住上游 payload 的
+// 前缀不变量：一轮一轮追加的对话，转换出来的 systemInstruction 必须逐字节不变，
+// contents 必须是上一轮 contents 的严格追加。
+//
+// 这条不变量就是 Gemini 隐式缓存能不能命中的充要条件。它曾经被破坏过：开启了
+// anthropic-beta: mid-conversation-system 的客户端逐轮注入 role="system" 消息，
+// 而 buildContents 把它们全部上提到 systemInstruction 末尾，于是每一轮都在
+// contents 之前插入新文本。现场表现是 cache_read 卡在 "tools + 上一轮 systemInstruction"
+// 这个固定值上、随对话增长命中率从 62% 一路掉到 47%，整段对话历史永远进不了缓存。
+//
+// 因此这里检查的是**整个序列化 payload 的前缀**，而不只是某一条消息落在哪里：
+// 单条消息的位置断言看不出「前面被插入了东西」这种破坏方式。
+func TestTransformClaudeToGeminiWithOptions_UpstreamPrefixIsAppendOnly(t *testing.T) {
+	transform := func(t *testing.T, messages []ClaudeMessage) V1InternalRequest {
+		t.Helper()
+
+		body, err := TransformClaudeToGeminiWithOptions(&ClaudeRequest{
+			Model:    "gemini-2.5-flash",
+			System:   json.RawMessage(`[{"type":"text","text":"You are a coding agent."}]`),
+			Messages: messages,
+		}, "project-1", "gemini-2.5-flash", DefaultTransformOptions())
+		require.NoError(t, err)
+
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		return req
+	}
+
+	// 把 contents 序列化成一串字节，用于前缀比较
+	serializeContents := func(t *testing.T, contents []GeminiContent) string {
+		t.Helper()
+
+		var b strings.Builder
+		for i := range contents {
+			raw, err := json.Marshal(contents[i])
+			require.NoError(t, err)
+			b.Write(raw)
+		}
+		return b.String()
+	}
+
+	// 模拟客户端逐轮追加：assistant 回复 + 用户新提问 + 一条逐轮注入的 system 提示
+	messages := []ClaudeMessage{
+		{Role: "user", Content: json.RawMessage(`"turn 0"`)},
+		{Role: "system", Content: json.RawMessage(`"<reminder>tokens left 1000</reminder>"`)},
+	}
+
+	prev := transform(t, messages)
+	prevSystem, err := json.Marshal(prev.Request.SystemInstruction)
+	require.NoError(t, err)
+	prevContents := serializeContents(t, prev.Request.Contents)
+
+	for turn := 1; turn <= 5; turn++ {
+		messages = append(messages,
+			ClaudeMessage{Role: "assistant", Content: json.RawMessage(fmt.Sprintf(`"answer %d"`, turn))},
+			ClaudeMessage{Role: "user", Content: json.RawMessage(fmt.Sprintf(`"turn %d"`, turn))},
+			// 逐轮变化的注入内容：这正是当初把 systemInstruction 撑得逐轮不同的东西
+			ClaudeMessage{Role: "system", Content: json.RawMessage(fmt.Sprintf(`"<reminder>tokens left %d</reminder>"`, 1000-turn))},
+		)
+
+		cur := transform(t, messages)
+
+		curSystem, err := json.Marshal(cur.Request.SystemInstruction)
+		require.NoError(t, err)
+		require.Equal(t, string(prevSystem), string(curSystem),
+			"第 %d 轮 systemInstruction 发生变化，上游前缀缓存会整段失效", turn)
+
+		curContents := serializeContents(t, cur.Request.Contents)
+		require.True(t, strings.HasPrefix(curContents, prevContents),
+			"第 %d 轮 contents 不是上一轮的追加，上游前缀缓存会整段失效", turn)
+		require.Greater(t, len(curContents), len(prevContents),
+			"第 %d 轮没有新增任何 contents", turn)
+
+		// 逐轮注入的内容必须确实进了 contents，而不是被丢掉
+		require.Contains(t, curContents, fmt.Sprintf("tokens left %d", 1000-turn))
+
+		prevSystem, prevContents = curSystem, curContents
+	}
 }
 
 func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions(t *testing.T) {
@@ -677,6 +868,20 @@ func TestBuildParts_ToolResultWithMappedIDKeepsFunctionResponse(t *testing.T) {
 	require.NotNil(t, funcResp, "mapped tool_result must stay a FunctionResponse")
 	require.Equal(t, "read_file", funcResp.Name)
 	require.Equal(t, "toolu_9", funcResp.ID)
+}
+
+func TestBuildParts_DocumentBecomesInlineData(t *testing.T) {
+	content := `[
+		{"type":"text","text":"read this"},
+		{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}}
+	]`
+	parts, stripped, err := buildParts(json.RawMessage(content), map[string]string{}, true)
+	require.NoError(t, err)
+	require.False(t, stripped)
+	require.Len(t, parts, 2)
+	require.NotNil(t, parts[1].InlineData)
+	require.Equal(t, "application/pdf", parts[1].InlineData.MimeType)
+	require.Equal(t, "JVBERi0=", parts[1].InlineData.Data)
 }
 
 // TestToolConfigAlwaysPresent ensures toolConfig is always emitted, including for
