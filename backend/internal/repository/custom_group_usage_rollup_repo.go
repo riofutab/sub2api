@@ -213,9 +213,6 @@ func (r *dashboardAggregationRepository) syncGroupUsageRollupsInTx(ctx context.C
 		if closedTime.After(todayDateTime) {
 			return fmt.Errorf("分组用量汇总水位位于未来: %s", closedBefore)
 		}
-		if closedBefore == todayDate {
-			return nil
-		}
 	}
 
 	var earliest sql.NullTime
@@ -225,6 +222,12 @@ func (r *dashboardAggregationRepository) syncGroupUsageRollupsInTx(ctx context.C
 	retainedFrom := todayStart
 	if earliest.Valid {
 		retainedFrom = earliest.Time.UTC()
+	}
+	// retained_from 前移说明保留期前沿的数据被清掉了（保留期清理或删分区），
+	// 见 markGroupUsageRollupRetentionTrimmed。
+	retentionTrimmed := retainedFrom.After(previousRetainedFrom)
+	if !timezoneChanged && closedBefore == todayDate && !retentionTrimmed {
+		return nil
 	}
 	retainedDate := service.GroupUsageDate(retainedFrom)
 	retainedDateTime, err := service.ParseGroupUsageDate(retainedDate)
@@ -249,7 +252,41 @@ func (r *dashboardAggregationRepository) syncGroupUsageRollupsInTx(ctx context.C
 		return fmt.Errorf("清理分组用量日桶: %w", err)
 	}
 
+	// 前沿被裁剪时，更早的日桶已由上面的 DELETE 清掉，边界日的桶里还含着被删行的费用，
+	// 只需重算这一天，不必重建整个保留期。边界日落在重建区间内时由下面的重建覆盖。
+	if !timezoneChanged && retentionTrimmed && retainedDate < rebuildStartDate {
+		if _, err := r.sql.ExecContext(ctx, `
+			DELETE FROM usage_group_daily_rollups
+			WHERE bucket_date = $1::date
+		`, retainedDate); err != nil {
+			return fmt.Errorf("清理分组用量边界日桶: %w", err)
+		}
+		if err := r.rebuildGroupUsageRollupBuckets(ctx, retainedDateTime, retainedDateTime.AddDate(0, 0, 1), timezoneName); err != nil {
+			return fmt.Errorf("重算分组用量边界日桶: %w", err)
+		}
+	}
+
+	if rebuildStart.Before(todayStart) {
+		if err := r.rebuildGroupUsageRollupBuckets(ctx, rebuildStart, todayStart, timezoneName); err != nil {
+			return fmt.Errorf("重建分组用量日桶: %w", err)
+		}
+	}
+
 	if _, err := r.sql.ExecContext(ctx, `
+		UPDATE usage_group_rollup_state
+		SET closed_before = $1::date,
+			retained_from = $2,
+			timezone_name = $3,
+			updated_at = NOW()
+		WHERE id = 1
+	`, todayDate, retainedFrom, timezoneName); err != nil {
+		return fmt.Errorf("更新分组用量汇总水位: %w", err)
+	}
+	return nil
+}
+
+func (r *dashboardAggregationRepository) rebuildGroupUsageRollupBuckets(ctx context.Context, start, end time.Time, timezoneName string) error {
+	_, err := r.sql.ExecContext(ctx, `
 		INSERT INTO usage_group_daily_rollups (bucket_date, group_id, actual_cost, computed_at)
 		SELECT
 			(created_at AT TIME ZONE $3::text)::date AS bucket_date,
@@ -265,21 +302,8 @@ func (r *dashboardAggregationRepository) syncGroupUsageRollupsInTx(ctx context.C
 		DO UPDATE SET
 			actual_cost = EXCLUDED.actual_cost,
 			computed_at = EXCLUDED.computed_at
-	`, rebuildStart.UTC(), todayStart.UTC(), timezoneName); err != nil {
-		return fmt.Errorf("重建分组用量日桶: %w", err)
-	}
-
-	if _, err := r.sql.ExecContext(ctx, `
-		UPDATE usage_group_rollup_state
-		SET closed_before = $1::date,
-			retained_from = $2,
-			timezone_name = $3,
-			updated_at = NOW()
-		WHERE id = 1
-	`, todayDate, retainedFrom, timezoneName); err != nil {
-		return fmt.Errorf("更新分组用量汇总水位: %w", err)
-	}
-	return nil
+	`, start.UTC(), end.UTC(), timezoneName)
+	return err
 }
 
 func lockGroupUsageRollupState(ctx context.Context, tx *sql.Tx) error {
@@ -306,5 +330,38 @@ func invalidateGroupUsageRollupsAt(ctx context.Context, tx *sql.Tx, affectedAt t
 			updated_at = NOW()
 		WHERE id = 1
 	`, affectedAt.UTC(), timezoneName)
+	return err
+}
+
+// lockGroupUsageRollupStateForRetentionTrim 锁住水位行并返回当前 closed_before，
+// 供保留期清理在删除后调用 markGroupUsageRollupRetentionTrimmed 恢复。
+func lockGroupUsageRollupStateForRetentionTrim(ctx context.Context, tx *sql.Tx) (string, error) {
+	var closedBefore string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT closed_before::text
+		FROM usage_group_rollup_state
+		WHERE id = 1
+		FOR UPDATE
+	`).Scan(&closedBefore); err != nil {
+		return "", fmt.Errorf("锁定分组用量汇总水位: %w", err)
+	}
+	return closedBefore, nil
+}
+
+// markGroupUsageRollupRetentionTrimmed 在保留期清理（只删最老数据）的事务里调用。
+//
+// 删除触发器会把 closed_before 退回到被删行的日期，下一次同步就会重建整个保留期，
+// 重建期间持有水位行的 FOR UPDATE，所有带 group_id 的用量写入都在触发器里等锁。
+// 前沿裁剪只影响边界日的桶，所以这里把 closed_before 恢复成删除前的值，并把
+// retained_from 置为纪元：同步看到 MIN(created_at) 前移后，只清掉更早的桶并重算边界日。
+// 置为纪元而不是记录被删时间，是为了在同一时间戳的行被批次拆开时也一定能触发重算。
+func markGroupUsageRollupRetentionTrimmed(ctx context.Context, tx *sql.Tx, closedBefore string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE usage_group_rollup_state
+		SET closed_before = $1::date,
+			retained_from = TIMESTAMPTZ '1970-01-01 00:00:00+00',
+			updated_at = NOW()
+		WHERE id = 1
+	`, closedBefore)
 	return err
 }
