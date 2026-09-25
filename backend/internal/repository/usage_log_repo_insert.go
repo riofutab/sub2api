@@ -100,6 +100,9 @@ const (
 	usageLogBestEffortRecentTTL     = 30 * time.Second
 )
 
+// usageLogBestEffortTimeout 是 best-effort 批量插入与每条逐行兜底各自的超时；测试会调小。
+var usageLogBestEffortTimeout = 10 * time.Second
+
 type usageLogCreateRequest struct {
 	log      *service.UsageLog
 	prepared usageLogInsertPrepared
@@ -602,14 +605,17 @@ func (r *usageLogRepository) flushBestEffortBatch(db *sql.DB, batch []usageLogBe
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), usageLogBestEffortTimeout)
 	defer cancel()
 
 	query, args := buildUsageLogBestEffortInsertQuery(preparedList)
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		logger.LegacyPrintf("repository.usage_log", "best-effort batch insert failed: %v", err)
 		for _, group := range groupOrder {
-			singleErr := execUsageLogInsertNoResult(ctx, db, group.prepared)
+			// 批量插入可能正是因为耗尽超时才失败，兜底不能复用它的 ctx。
+			singleCtx, singleCancel := context.WithTimeout(context.Background(), usageLogBestEffortTimeout)
+			singleErr := execUsageLogInsertNoResult(singleCtx, db, group.prepared)
+			singleCancel()
 			if singleErr != nil {
 				logger.LegacyPrintf("repository.usage_log", "best-effort single fallback insert failed: %v", singleErr)
 			} else if group.prepared.requestID != "" && r != nil && r.bestEffortRecent != nil {
