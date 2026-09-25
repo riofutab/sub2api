@@ -282,7 +282,6 @@
           selectable
           :selected-keys="selectedIds"
           :selection-label="getUserSelectionLabel"
-          :actions-count="7"
           :server-side-sort="true"
           default-sort-key="created_at"
           default-sort-order="desc"

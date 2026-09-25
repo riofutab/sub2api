@@ -79,7 +79,6 @@
           :columns="columns"
           :data="visibleBatchJobs"
           :loading="loadingKeys || loadingJobs"
-          :expandable-actions="false"
           row-key="id"
         >
           <template #header-select>
