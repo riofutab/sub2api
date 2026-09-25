@@ -28,7 +28,7 @@ describe('buildOpenAIUsageRefreshKey', () => {
     expect(buildOpenAIUsageRefreshKey(base)).not.toBe(buildOpenAIUsageRefreshKey(next))
   })
 
-  it('会在 last_used_at 变化时生成不同 key', () => {
+  it('仅 last_used_at 或 codex_usage_updated_at 变化时 key 不变', () => {
     const base = {
       id: 3,
       platform: 'openai',
@@ -44,10 +44,30 @@ describe('buildOpenAIUsageRefreshKey', () => {
 
     const next = {
       ...base,
-      last_used_at: '2026-03-07T10:02:00Z'
+      last_used_at: '2026-03-07T10:02:00Z',
+      extra: { ...base.extra, codex_usage_updated_at: '2026-03-07T10:02:00Z' }
     }
 
-    expect(buildOpenAIUsageRefreshKey(base)).not.toBe(buildOpenAIUsageRefreshKey(next))
+    expect(buildOpenAIUsageRefreshKey(base)).toBe(buildOpenAIUsageRefreshKey(next))
+  })
+
+  it('5h 或 7d 百分比变化时生成不同 key', () => {
+    const base = {
+      id: 4,
+      platform: 'openai',
+      type: 'oauth',
+      updated_at: '2026-03-07T10:00:00Z',
+      extra: { codex_5h_used_percent: 12, codex_7d_used_percent: 24 }
+    } as any
+
+    expect(buildOpenAIUsageRefreshKey(base)).not.toBe(buildOpenAIUsageRefreshKey({
+      ...base,
+      extra: { ...base.extra, codex_5h_used_percent: 13 }
+    }))
+    expect(buildOpenAIUsageRefreshKey(base)).not.toBe(buildOpenAIUsageRefreshKey({
+      ...base,
+      extra: { ...base.extra, codex_7d_used_percent: 25 }
+    }))
   })
 
   it('非 OpenAI OAuth 账号返回空 key', () => {
