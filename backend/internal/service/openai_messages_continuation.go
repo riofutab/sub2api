@@ -209,13 +209,13 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionResponseID(_ context.Conte
 			if existing.ContinuationDisabled {
 				existing.ResponseID = ""
 				existing.ExpiresAt = time.Now().Add(s.openAIWSResponseStickyTTL())
-				s.openaiCompatSessionResponses.Store(key, existing)
+				s.storeOpenAICompatSessionResponse(key, existing)
 				return
 			}
 			binding.TurnState = existing.TurnState
 		}
 	}
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionResponse(key, binding)
 }
 
 func (s *OpenAIGatewayService) deleteOpenAICompatSessionResponseID(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) {
@@ -241,7 +241,7 @@ func (s *OpenAIGatewayService) deleteOpenAICompatSessionResponseID(_ context.Con
 		return
 	}
 	binding.ExpiresAt = time.Now().Add(s.openAIWSResponseStickyTTL())
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionResponse(key, binding)
 }
 
 func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) {
@@ -261,7 +261,7 @@ func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.
 			binding.TurnState = existing.TurnState
 		}
 	}
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionResponse(key, binding)
 }
 
 func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) bool {
@@ -330,5 +330,14 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionTurnState(_ context.Contex
 			binding.ContinuationDisabled = existing.ContinuationDisabled
 		}
 	}
+	s.storeOpenAICompatSessionResponse(key, binding)
+}
+
+// storeOpenAICompatSessionResponse 写入续链绑定并触发机会式过期清扫。
+func (s *OpenAIGatewayService) storeOpenAICompatSessionResponse(key string, binding openAICompatSessionResponseBinding) {
 	s.openaiCompatSessionResponses.Store(key, binding)
+	sweepExpiredSyncMapOnWrite(&s.openaiCompatSessionResponseWrites, &s.openaiCompatSessionResponses, func(value any, now time.Time) bool {
+		b, ok := value.(openAICompatSessionResponseBinding)
+		return !ok || (!b.ExpiresAt.IsZero() && now.After(b.ExpiresAt))
+	})
 }

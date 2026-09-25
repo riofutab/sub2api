@@ -88,6 +88,10 @@ func (s *OpenAIGatewayService) bindOpenAICompatAnthropicDigestPromptCacheKey(acc
 	if oldDigestChain != "" && oldDigestChain != digestChain {
 		s.openaiCompatAnthropicDigestSessions.Delete(ns + oldDigestChain)
 	}
+	sweepExpiredSyncMapOnWrite(&s.openaiCompatAnthropicDigestWrites, &s.openaiCompatAnthropicDigestSessions, func(value any, now time.Time) bool {
+		b, ok := value.(openAICompatAnthropicDigestBinding)
+		return !ok || (!b.ExpiresAt.IsZero() && now.After(b.ExpiresAt))
+	})
 }
 
 func promptCacheKeyFromAnthropicDigest(digestChain string) string {

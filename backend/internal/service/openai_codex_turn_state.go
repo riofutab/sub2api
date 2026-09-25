@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -148,18 +150,28 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 	}
 }
 
-// sweepOpenAICodexTurnStateOrigins 机会式清扫过期溯源记录：每 256 次写入
-// 全量遍历一轮，防止仅靠读侧惰性删除导致的慢泄漏（会话键无上界）。
-func (s *OpenAIGatewayService) sweepOpenAICodexTurnStateOrigins() {
-	if s.openaiCodexTurnStateWrites.Add(1)%256 != 0 {
+// openAISessionMapSweepEvery 是会话类 sync.Map 机会式全量清扫的写入间隔。
+const openAISessionMapSweepEvery = 256
+
+// sweepExpiredSyncMapOnWrite 每 openAISessionMapSweepEvery 次写入全量遍历一轮，删除 expired 判定为过期
+// （或类型不符）的项，防止仅靠读侧惰性删除导致的慢泄漏（会话键无上界）。
+func sweepExpiredSyncMapOnWrite(writes *atomic.Uint64, m *sync.Map, expired func(value any, now time.Time) bool) {
+	if writes.Add(1)%openAISessionMapSweepEvery != 0 {
 		return
 	}
 	now := time.Now()
-	s.openaiCodexTurnStateOrigins.Range(func(key, value any) bool {
-		origin, ok := value.(openAICodexTurnStateOrigin)
-		if !ok || (!origin.expiresAt.IsZero() && now.After(origin.expiresAt)) {
-			s.openaiCodexTurnStateOrigins.Delete(key)
+	m.Range(func(key, value any) bool {
+		if expired(value, now) {
+			m.Delete(key)
 		}
 		return true
+	})
+}
+
+// sweepOpenAICodexTurnStateOrigins 机会式清扫过期溯源记录。
+func (s *OpenAIGatewayService) sweepOpenAICodexTurnStateOrigins() {
+	sweepExpiredSyncMapOnWrite(&s.openaiCodexTurnStateWrites, &s.openaiCodexTurnStateOrigins, func(value any, now time.Time) bool {
+		origin, ok := value.(openAICodexTurnStateOrigin)
+		return !ok || (!origin.expiresAt.IsZero() && now.After(origin.expiresAt))
 	})
 }
