@@ -1466,7 +1466,128 @@ func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 		!bytes.Contains(body, []byte(`"thinking" :`)) {
 		return body
 	}
+	// 开了 thinking 的请求几乎都带历史 thinking 块，上面的字节预检基本拦不住；
+	// 先只读遍历确认确实有块要删，绝大多数签名齐全的请求不必反序列化整个请求体。
+	if !thinkingBlocksNeedFiltering(body, alwaysThinking) {
+		return body
+	}
+	return filterThinkingBlocksSlow(body, alwaysThinking)
+}
 
+// lastObjectMember 返回对象里最后一个同名键的值，与 encoding/json 解到 map 时「后者覆盖」一致。
+func lastObjectMember(obj gjson.Result, key string) gjson.Result {
+	var found gjson.Result
+	obj.ForEach(func(k, v gjson.Result) bool {
+		if k.Str == key {
+			found = v
+		}
+		return true
+	})
+	return found
+}
+
+// thinkingBlocksNeedFiltering 只读判断 filterThinkingBlocksSlow 是否会删除任何块。
+// 必须与慢路径的判定逐条对应：对合法 JSON，慢路径会改写时这里必须返回 true。
+// 非法 JSON 或顶层不是对象时慢路径原样返回，这里返回 false 结果相同。
+func thinkingBlocksNeedFiltering(body []byte, alwaysThinking bool) bool {
+	jsonStr := *(*string)(unsafe.Pointer(&body))
+	trimmed := strings.TrimLeft(jsonStr, " \t\r\n")
+	if trimmed == "" || trimmed[0] != '{' {
+		return false
+	}
+
+	var thinking, messages gjson.Result
+	gjson.Result{Type: gjson.JSON, Raw: jsonStr}.ForEach(func(key, value gjson.Result) bool {
+		switch key.Str {
+		case "thinking":
+			thinking = value
+		case "messages":
+			messages = value
+		}
+		return true
+	})
+	if !messages.IsArray() {
+		return false
+	}
+
+	thinkingEnabled := alwaysThinking
+	if thinking.IsObject() {
+		if t := lastObjectMember(thinking, "type"); t.Type == gjson.String && (t.Str == "enabled" || t.Str == "adaptive") {
+			thinkingEnabled = true
+		}
+	}
+
+	needs := false
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		if !msg.IsObject() {
+			return true
+		}
+		var role, content gjson.Result
+		msg.ForEach(func(k, v gjson.Result) bool {
+			switch k.Str {
+			case "role":
+				role = v
+			case "content":
+				content = v
+			}
+			return true
+		})
+		if !content.IsArray() {
+			return true
+		}
+		isAssistant := role.Type == gjson.String && role.Str == "assistant"
+		content.ForEach(func(_, block gjson.Result) bool {
+			if block.IsObject() && thinkingBlockNeedsFiltering(block, thinkingEnabled, isAssistant, alwaysThinking) {
+				needs = true
+				return false
+			}
+			return true
+		})
+		return !needs
+	})
+	return needs
+}
+
+func thinkingBlockNeedsFiltering(block gjson.Result, thinkingEnabled, isAssistant, alwaysThinking bool) bool {
+	var blockType, signature, data gjson.Result
+	hasThinkingKey := false
+	block.ForEach(func(k, v gjson.Result) bool {
+		switch k.Str {
+		case "type":
+			blockType = v
+		case "signature":
+			signature = v
+		case "data":
+			data = v
+		case "thinking":
+			hasThinkingKey = true
+		}
+		return true
+	})
+	typ := ""
+	if blockType.Type == gjson.String {
+		typ = blockType.Str
+	}
+	switch typ {
+	case "thinking", "redacted_thinking":
+		if thinkingEnabled && isAssistant {
+			if alwaysThinking && typ == "redacted_thinking" && data.Type == gjson.String && data.Str != "" {
+				return false
+			}
+			if signature.Type == gjson.String && signature.Str != "" && signature.Str != antigravity.DummyThoughtSignature {
+				return false
+			}
+		}
+		return true
+	case "":
+		return hasThinkingKey
+	default:
+		return false
+	}
+}
+
+// filterThinkingBlocksSlow 把整个请求体反序列化成 map 后过滤，是过滤规则的权威实现。
+func filterThinkingBlocksSlow(body []byte, alwaysThinking bool) []byte {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
