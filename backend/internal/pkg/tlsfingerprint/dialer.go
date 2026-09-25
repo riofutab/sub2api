@@ -52,9 +52,9 @@ type SOCKS5ProxyDialer struct {
 	proxyURL *url.URL
 }
 
-// Default TLS fingerprint values captured from Claude Code (Node.js 24.x)
+// Default TLS fingerprint values captured from Claude Code 2.1.280 (Node.js 24.x, OpenSSL 3.5)
 // Captured via tls-fingerprint-web capture server
-// JA3 Hash: 44f88fca027f27bab4bb08d4af15f23e
+// JA3 Hash: 8551a5c74b9d9ab55b8d259b501e82b9
 // JA4:      t13d1714h1_5b57614c22b0_7baf387fc6ff
 var (
 	// defaultCipherSuites contains the 17 cipher suites from Node.js 24.x

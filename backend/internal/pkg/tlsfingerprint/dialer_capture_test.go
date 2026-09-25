@@ -358,8 +358,9 @@ func TestBuildClientHelloSpecNewFields(t *testing.T) {
 				t.Errorf("default versions: got %v, want 2 entries", e.Versions)
 			}
 		case *utls.KeyShareExtension:
-			if len(e.KeyShares) != 1 {
-				t.Errorf("default key shares: got %d, want 1", len(e.KeyShares))
+			// X25519MLKEM768 + X25519, independent keys like OpenSSL 3.5.
+			if len(e.KeyShares) != 2 {
+				t.Errorf("default key shares: got %d, want 2", len(e.KeyShares))
 			}
 		}
 	}
