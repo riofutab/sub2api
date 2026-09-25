@@ -21,6 +21,13 @@ import (
 type Level = zapcore.Level
 
 const (
+	// 文件输出缓冲：攒满 fileBufferSize 或每 fileFlushInterval 刷一次盘，
+	// Error 及以上级别写完立即刷（见 syncOnErrorCore）。
+	fileBufferSize    = 64 * 1024
+	fileFlushInterval = time.Second
+)
+
+const (
 	LevelDebug = zapcore.DebugLevel
 	LevelInfo  = zapcore.InfoLevel
 	LevelWarn  = zapcore.WarnLevel
@@ -36,6 +43,14 @@ type Sink interface {
 	WriteLogEvent(event *LogEvent)
 }
 
+// SinkFilter 可由 Sink 选择实现。sinkCore 在编码字段之前用它判断事件是否需要投递，
+// 返回 false 时整条事件不再编码、不再投递。实现必须与 WriteLogEvent 内部的过滤结论一致：
+// level 为小写级别名，component 为非空的 "component" 字段值（否则为 LoggerName），
+// skip 为 OpsSystemLogSkipField 字段值。
+type SinkFilter interface {
+	AcceptsLogEntry(level, component string, skip bool) bool
+}
+
 type LogEvent struct {
 	Time       time.Time
 	Level      string
@@ -47,6 +62,7 @@ type LogEvent struct {
 
 var (
 	mu            sync.RWMutex
+	fileBuffer    atomic.Pointer[zapcore.BufferedWriteSyncer] // 当前文件输出缓冲，未开文件输出时为 nil
 	global        atomic.Pointer[zap.Logger]
 	sugar         atomic.Pointer[zap.SugaredLogger]
 	atomicLevel   zap.AtomicLevel
@@ -54,6 +70,15 @@ var (
 	currentSink   atomic.Value // sinkState
 	stdLogUndo    func()
 	bootstrapOnce sync.Once
+)
+
+// 标准输出与文件输出的底层 WriteSyncer 构造点。生产路径保持默认值，
+// 基准测试替换它们以统计真正落到 fd 上的 Write 次数。
+var (
+	stdWriteSyncers = func() (stdout, stderr zapcore.WriteSyncer) {
+		return zapcore.Lock(os.Stdout), zapcore.Lock(os.Stderr)
+	}
+	wrapFileWriteSyncer = func(ws zapcore.WriteSyncer) zapcore.WriteSyncer { return ws }
 )
 
 type sinkState struct {
@@ -76,10 +101,11 @@ func Init(options InitOptions) error {
 
 func initLocked(options InitOptions) error {
 	normalized := options.normalized()
-	zl, al, err := buildLogger(normalized)
+	zl, al, buf, err := buildLogger(normalized)
 	if err != nil {
 		return err
 	}
+	prevBuffer := fileBuffer.Swap(buf)
 
 	prev := global.Load()
 	global.Store(zl)
@@ -92,6 +118,10 @@ func initLocked(options InitOptions) error {
 
 	if prev != nil {
 		_ = prev.Sync()
+	}
+	if prevBuffer != nil {
+		// 停掉旧缓冲的刷盘协程并刷出剩余内容，避免每次 Reconfigure 泄漏一个协程。
+		_ = prevBuffer.Stop()
 	}
 	return nil
 }
@@ -242,7 +272,7 @@ func bridgeSlogLocked() {
 	slog.SetDefault(slog.New(newSlogZapHandler(base.Named("slog"))))
 }
 
-func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
+func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, *zapcore.BufferedWriteSyncer, error) {
 	level, _ := parseLevel(options.Level)
 	atomic := zap.NewAtomicLevelAt(level)
 
@@ -277,12 +307,14 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 		errPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 			return lvl >= atomic.Level() && lvl >= zapcore.WarnLevel
 		})
-		cores = append(cores, zapcore.NewCore(enc, zapcore.Lock(os.Stdout), infoPriority))
-		cores = append(cores, zapcore.NewCore(enc, zapcore.Lock(os.Stderr), errPriority))
+		stdout, stderr := stdWriteSyncers()
+		cores = append(cores, zapcore.NewCore(enc, stdout, infoPriority))
+		cores = append(cores, zapcore.NewCore(enc, stderr, errPriority))
 	}
 
+	var buf *zapcore.BufferedWriteSyncer
 	if options.Output.ToFile {
-		fileCore, filePath, fileErr := buildFileCore(enc, atomic, options)
+		fileCore, fileBuf, filePath, fileErr := buildFileCore(enc, atomic, options)
 		if fileErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "time=%s level=WARN msg=\"日志文件输出初始化失败，降级为仅标准输出\" path=%s err=%v\n",
 				time.Now().Format(time.RFC3339Nano),
@@ -291,6 +323,7 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 			)
 		} else {
 			cores = append(cores, fileCore)
+			buf = fileBuf
 		}
 	}
 
@@ -317,10 +350,10 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 		zap.String("service", options.ServiceName),
 		zap.String("env", options.Environment),
 	)
-	return logger, atomic, nil
+	return logger, atomic, buf, nil
 }
 
-func buildFileCore(enc zapcore.Encoder, atomic zap.AtomicLevel, options InitOptions) (zapcore.Core, string, error) {
+func buildFileCore(enc zapcore.Encoder, atomic zap.AtomicLevel, options InitOptions) (zapcore.Core, *zapcore.BufferedWriteSyncer, string, error) {
 	filePath := options.Output.FilePath
 	if strings.TrimSpace(filePath) == "" {
 		filePath = resolveLogFilePath("")
@@ -328,7 +361,7 @@ func buildFileCore(enc zapcore.Encoder, atomic zap.AtomicLevel, options InitOpti
 
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, filePath, err
+		return nil, nil, filePath, err
 	}
 	lj := &lumberjack.Logger{
 		Filename:   filePath,
@@ -338,7 +371,39 @@ func buildFileCore(enc zapcore.Encoder, atomic zap.AtomicLevel, options InitOpti
 		Compress:   options.Rotation.Compress,
 		LocalTime:  options.Rotation.LocalTime,
 	}
-	return zapcore.NewCore(enc, zapcore.AddSync(lj), atomic), filePath, nil
+	buf := &zapcore.BufferedWriteSyncer{
+		WS:            wrapFileWriteSyncer(zapcore.AddSync(lj)),
+		Size:          fileBufferSize,
+		FlushInterval: fileFlushInterval,
+	}
+	return &syncOnErrorCore{Core: zapcore.NewCore(enc, buf, atomic)}, buf, filePath, nil
+}
+
+// syncOnErrorCore 在写完 Error 及以上级别的日志后立即 Sync，
+// 让缓冲输出上的错误日志不必等到下一次定时刷盘。
+type syncOnErrorCore struct {
+	zapcore.Core
+}
+
+func (c *syncOnErrorCore) With(fields []zapcore.Field) zapcore.Core {
+	return &syncOnErrorCore{Core: c.Core.With(fields)}
+}
+
+func (c *syncOnErrorCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return ce.AddCore(entry, c)
+	}
+	return ce
+}
+
+func (c *syncOnErrorCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	if err := c.Core.Write(entry, fields); err != nil {
+		return err
+	}
+	if entry.Level >= zapcore.ErrorLevel {
+		return c.Sync()
+	}
+	return nil
 }
 
 type sinkCore struct {
@@ -386,6 +451,13 @@ func (s *sinkCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	if sink == nil {
 		return nil
 	}
+	level := strings.ToLower(entry.Level.String())
+	if filter, ok := sink.(SinkFilter); ok {
+		if component, skip, ok := sinkRoutingHints(entry.LoggerName, s.fields, fields); ok &&
+			!filter.AcceptsLogEntry(level, component, skip) {
+			return nil
+		}
+	}
 
 	enc := zapcore.NewMapObjectEncoder()
 	for _, f := range s.fields {
@@ -397,7 +469,7 @@ func (s *sinkCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 
 	event := &LogEvent{
 		Time:       entry.Time,
-		Level:      strings.ToLower(entry.Level.String()),
+		Level:      level,
 		Component:  entry.LoggerName,
 		Message:    entry.Message,
 		LoggerName: entry.LoggerName,
@@ -405,6 +477,37 @@ func (s *sinkCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	}
 	sink.WriteLogEvent(event)
 	return nil
+}
+
+// sinkRoutingHints 不编码字段，直接从字段列表里取出 SinkFilter 需要的 component 与 skip，
+// 结果与 MapObjectEncoder 编码后的顶层键值一致（同名键后者覆盖前者）。
+// 遇到无法在不编码的前提下确定结果的字段（非字符串 component、非布尔 skip、
+// Namespace/Inline 会改变顶层键），返回 ok=false，由调用方走完整编码路径。
+func sinkRoutingHints(loggerName string, ctxFields, entryFields []zapcore.Field) (component string, skip bool, ok bool) {
+	fieldComponent := ""
+	for _, fields := range [2][]zapcore.Field{ctxFields, entryFields} {
+		for i := range fields {
+			f := &fields[i]
+			switch {
+			case f.Type == zapcore.NamespaceType || f.Type == zapcore.InlineMarshalerType:
+				return "", false, false
+			case f.Key == "component":
+				if f.Type != zapcore.StringType {
+					return "", false, false
+				}
+				fieldComponent = f.String
+			case f.Key == OpsSystemLogSkipField:
+				if f.Type != zapcore.BoolType {
+					return "", false, false
+				}
+				skip = f.Integer == 1
+			}
+		}
+	}
+	if strings.TrimSpace(fieldComponent) != "" {
+		return fieldComponent, skip, true
+	}
+	return loggerName, skip, true
 }
 
 func (s *sinkCore) Sync() error {
@@ -440,6 +543,11 @@ func (b *stdLogBridge) Write(p []byte) (int, error) {
 		entry.Error(msg, zap.Bool("legacy_stdlog", true))
 	default:
 		entry.Info(msg, zap.Bool("legacy_stdlog", true))
+	}
+	// log.Fatal* 经由这里输出后直接 os.Exit，走不到 main 里的 defer logger.Sync()。
+	// 标准库 log 只剩低频的历史调用，每条都刷一次文件缓冲，保证启动失败等信息落盘。
+	if buf := fileBuffer.Load(); buf != nil {
+		_ = buf.Sync()
 	}
 	return len(p), nil
 }
