@@ -855,10 +855,9 @@ func sleepAntigravityBackoffWithContext(ctx context.Context, attempt int) bool {
 	}
 }
 
-// isSingleAccountRetry 检查 context 中是否设置了单账号退避重试标记
+// isSingleAccountRetry 检查 context 中是否设置了单账号退避重试标记（含延迟判定）
 func isSingleAccountRetry(ctx context.Context) bool {
-	v, _ := SingleAccountRetryFromContext(ctx)
-	return v
+	return ResolveSingleAccountRetry(ctx)
 }
 
 // setModelRateLimitByModelName 使用官方模型 ID 设置模型级限流

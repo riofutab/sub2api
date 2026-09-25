@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -105,6 +106,48 @@ func WithSingleAccountRetry(ctx context.Context, value bool, bridgeOldKeys bool)
 	}, func(base context.Context) context.Context {
 		return context.WithValue(base, ctxkey.SingleAccountRetry, value)
 	})
+}
+
+type singleAccountRetryResolverContextKey struct{}
+
+var singleAccountRetryResolverKey = singleAccountRetryResolverContextKey{}
+
+// singleAccountRetryResolver 延迟计算"是否单账号分组"，同一请求内只算一次。
+type singleAccountRetryResolver struct {
+	once    sync.Once
+	resolve func(ctx context.Context) bool
+	value   bool
+}
+
+func (r *singleAccountRetryResolver) get(ctx context.Context) bool {
+	r.once.Do(func() {
+		r.value = r.resolve(ctx)
+	})
+	return r.value
+}
+
+// WithSingleAccountRetryResolver 挂一个延迟判定函数：只有在请求上下文没有显式
+// SingleAccountRetry 标记、且 service 真正需要这个判断（antigravity 收到 503/预检查命中限流）时才会调用，
+// 结果在请求内缓存。
+func WithSingleAccountRetryResolver(ctx context.Context, resolve func(ctx context.Context) bool) context.Context {
+	if ctx == nil || resolve == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, singleAccountRetryResolverKey, &singleAccountRetryResolver{resolve: resolve})
+}
+
+// ResolveSingleAccountRetry 优先返回显式标记；没有显式标记时调用延迟判定函数。
+func ResolveSingleAccountRetry(ctx context.Context) bool {
+	if v, ok := SingleAccountRetryFromContext(ctx); ok {
+		return v
+	}
+	if ctx == nil {
+		return false
+	}
+	if r, ok := ctx.Value(singleAccountRetryResolverKey).(*singleAccountRetryResolver); ok && r != nil {
+		return r.get(ctx)
+	}
+	return false
 }
 
 func WithAccountSwitchCount(ctx context.Context, value int, bridgeOldKeys bool) context.Context {

@@ -1133,6 +1133,20 @@ func (s *GatewayService) IsSingleAntigravityAccountGroup(ctx context.Context, gr
 	return len(accounts) == 1
 }
 
+// WithLazySingleAntigravityAccountGroupCheck 把 IsSingleAntigravityAccountGroup 挂成延迟判定：
+// 这个结果只被 antigravity 重试路径在收到 503 或命中模型限流预检查时读取，
+// 正常请求不再为它读取（通常为空的）antigravity forced 快照桶并回源 DB。
+func (s *GatewayService) WithLazySingleAntigravityAccountGroupCheck(ctx context.Context, groupID *int64) context.Context {
+	var groupIDCopy *int64
+	if groupID != nil {
+		id := *groupID
+		groupIDCopy = &id
+	}
+	return WithSingleAccountRetryResolver(ctx, func(resolveCtx context.Context) bool {
+		return s.IsSingleAntigravityAccountGroup(resolveCtx, groupIDCopy)
+	})
+}
+
 func (s *GatewayService) isAccountAllowedForPlatform(account *Account, platform string, useMixed bool) bool {
 	if account == nil {
 		return false

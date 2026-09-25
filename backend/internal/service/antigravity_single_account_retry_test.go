@@ -723,6 +723,57 @@ func TestAntigravityRetryLoop_PreCheck_SingleAccountRetry_SkipsRateLimit(t *test
 	require.Equal(t, 1, upstream.calls, "should have reached upstream despite rate limit")
 }
 
+// TestAntigravityRetryLoop_PreCheck_LazySingleAccountResolver
+// handler 只挂延迟判定时：预检查命中限流才调用判定；判定为单账号则照常到达上游，否则切换账号。
+func TestAntigravityRetryLoop_PreCheck_LazySingleAccountResolver(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		singleAccount bool
+	}{
+		{name: "single account reaches upstream", singleAccount: true},
+		{name: "multi account switches", singleAccount: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := &recordingOKUpstream{}
+			account := &Account{
+				ID: 21, Name: "acc-lazy", Type: AccountTypeOAuth, Platform: PlatformAntigravity,
+				Schedulable: true, Status: StatusActive, Concurrency: 1,
+				Extra: map[string]any{
+					modelRateLimitsKey: map[string]any{
+						"claude-sonnet-4-5": map[string]any{
+							"rate_limit_reset_at": time.Now().Add(30 * time.Second).Format(time.RFC3339),
+						},
+					},
+				},
+			}
+			resolverCalls := 0
+			ctx := WithSingleAccountRetryResolver(context.Background(), func(context.Context) bool {
+				resolverCalls++
+				return tc.singleAccount
+			})
+
+			result, err := (&AntigravityGatewayService{}).antigravityRetryLoop(antigravityRetryLoopParams{
+				ctx: ctx, prefix: "[test]", account: account, accessToken: "token", action: "generateContent",
+				body: []byte(`{"input":"test"}`), httpUpstream: upstream, requestedModel: "claude-sonnet-4-5",
+				handleError: func(context.Context, string, *Account, int, http.Header, []byte, string, int64, string, bool) *handleModelRateLimitResult {
+					return nil
+				},
+			})
+
+			require.Equal(t, 1, resolverCalls)
+			if tc.singleAccount {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, 1, upstream.calls)
+				return
+			}
+			var switchErr *AntigravityAccountSwitchError
+			require.ErrorAs(t, err, &switchErr)
+			require.Zero(t, upstream.calls)
+		})
+	}
+}
+
 // TestAntigravityRetryLoop_PreCheck_NoSingleAccountRetry_SwitchesOnRateLimit
 // 对照组：无 SingleAccountRetry + 已限流 → 预检查返回 switchError
 func TestAntigravityRetryLoop_PreCheck_NoSingleAccountRetry_SwitchesOnRateLimit(t *testing.T) {
