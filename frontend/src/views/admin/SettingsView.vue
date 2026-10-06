@@ -9418,9 +9418,9 @@ const openAI403CooldownLoading = ref(true);
 const openAI403CooldownSaving = ref(false);
 const openAI403CooldownForm = reactive({
   enabled: true,
-  cooldown_minutes: 10,
+  cooldown_minutes: 60,
   disable_threshold: 3,
-  window_minutes: 180,
+  window_minutes: 360,
 });
 
 // Panel API Rate Limit 状态

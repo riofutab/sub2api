@@ -642,7 +642,7 @@ func DefaultOpenAIImagesOAuthUnavailableCooldownSettings() *OpenAIImagesOAuthUna
 	return &OpenAIImagesOAuthUnavailableCooldownSettings{CooldownMinutes: openAIImagesOAuthUnavailableDefaultCooldownMinutes}
 }
 
-// DefaultOpenAI403CooldownSettings 返回默认的 OpenAI 403 冷却配置（启用，10 分钟 / 3 次 / 180 分钟窗口）
+// DefaultOpenAI403CooldownSettings 返回默认的 OpenAI 403 冷却配置（启用，60 分钟 / 3 次 / 360 分钟窗口）
 func DefaultOpenAI403CooldownSettings() *OpenAI403CooldownSettings {
 	return &OpenAI403CooldownSettings{
 		Enabled:          true,

@@ -98,9 +98,9 @@ var openCodeGoUsageLimitResetPattern = regexp.MustCompile(`(?i)\bresets\s+in\s+`
 var openCodeGoUsageLimitDurationPartPattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)\b`)
 
 const (
-	openAI403CooldownMinutesDefault = 10
+	openAI403CooldownMinutesDefault = 60
 	openAI403DisableThreshold       = 3
-	openAI403CounterWindowMinutes   = 180
+	openAI403CounterWindowMinutes   = 360
 	maxOpenAI403CooldownMinutes     = 1440
 	maxOpenAI403DisableThreshold    = 100
 	maxOpenAI403WindowMinutes       = 1440

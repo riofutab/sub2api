@@ -1078,11 +1078,11 @@ export default {
         enabled: '启用 403 临时冷却',
         enabledHint: '关闭后 403 仅触发换号，不再暂停调度、不计数、不禁用账号',
         cooldownMinutes: '单次冷却时长（分钟）',
-        cooldownMinutesHint: '收到 403 后账号暂停调度的时长（1-1440 分钟，默认 10）',
+        cooldownMinutesHint: '收到 403 后账号暂停调度的时长（1-1440 分钟，默认 60）',
         disableThreshold: '禁用阈值（次）',
         disableThresholdHint: '计数窗口内累计达到该次数即标记账号为错误状态（1-100 次，默认 3）',
         windowMinutes: '计数窗口（分钟）',
-        windowMinutesHint: '连续 403 的统计窗口（1-1440 分钟，默认 180）',
+        windowMinutesHint: '连续 403 的统计窗口（1-1440 分钟，默认 360）',
         saved: '403 冷却设置保存成功',
         saveFailed: '保存 403 冷却设置失败'
       },

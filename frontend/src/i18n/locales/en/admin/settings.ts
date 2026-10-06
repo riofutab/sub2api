@@ -1084,11 +1084,11 @@ export default {
         enabled: 'Enable 403 Temporary Cooldown',
         enabledHint: 'When disabled, a 403 only triggers failover without pausing, counting, or disabling the account',
         cooldownMinutes: 'Cooldown Duration (minutes)',
-        cooldownMinutesHint: 'Duration to pause account scheduling after a 403 (1-1440 minutes, default 10)',
+        cooldownMinutesHint: 'Duration to pause account scheduling after a 403 (1-1440 minutes, default 60)',
         disableThreshold: 'Disable Threshold (count)',
         disableThresholdHint: 'Mark the account as errored after this many 403 responses within the counting window (1-100, default 3)',
         windowMinutes: 'Counting Window (minutes)',
-        windowMinutesHint: 'Time window used to count consecutive 403 responses (1-1440 minutes, default 180)',
+        windowMinutesHint: 'Time window used to count consecutive 403 responses (1-1440 minutes, default 360)',
         saved: '403 cooldown settings saved',
         saveFailed: 'Failed to save 403 cooldown settings'
       },
