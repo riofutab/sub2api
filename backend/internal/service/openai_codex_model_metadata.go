@@ -21,6 +21,9 @@ func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite b
 		if len(value) == 0 {
 			continue
 		}
+		if field == "service_tiers" && bytes.Equal(value, []byte("null")) {
+			value = []byte("[]")
+		}
 		// These Codex fields are nullable booleans or strings, never arbitrary objects.
 		if !bytes.Equal(value, []byte("null")) {
 			if field == "service_tiers" {
@@ -447,8 +450,12 @@ func intersectUpstreamModelMetadata(modelID string, candidates []UpstreamModelMe
 				if len(shared) == 0 {
 					// Explicitly clear conflicting fields so descriptor defaults cannot restore them.
 					shared = json.RawMessage("null")
-					if field == "supports_search_tool" || field == "use_responses_lite" {
+					switch field {
+					case "supports_search_tool", "use_responses_lite":
 						shared = json.RawMessage("false")
+					case "service_tiers":
+						// Codex decodes service_tiers as a required array; null rejects the whole manifest.
+						shared = json.RawMessage("[]")
 					}
 				}
 				break

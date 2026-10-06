@@ -629,6 +629,8 @@ export default {
         flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
         flattenNamespacesDesc:
           'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',
+        tlsFingerprint: 'Codex CLI TLS fingerprint',
+        tlsFingerprintDesc: 'When enabled, HTTP requests from this account to ChatGPT use the Codex CLI (OpenSSL 3.5) TLS handshake instead of the Go default. WebSocket connections are not affected. Try it on a few accounts first.',
         longContextBilling: 'API long-context pricing',
         longContextBillingDesc:
           'Disabled by default. Enable only when this account\'s upstream charges OpenAI API long-context rates above the model threshold.',
@@ -1569,6 +1571,7 @@ export default {
       startingTestForAccount: 'Starting test for account: {name}',
       testAccountTypeLabel: 'Account type: {type}',
       selectTestModel: 'Select Test Model',
+      unlistedModelHint: 'Not listed upstream',
       testModel: 'Test model',
       testPrompt: 'Prompt: "hi"',
       imagePromptLabel: 'Image prompt',

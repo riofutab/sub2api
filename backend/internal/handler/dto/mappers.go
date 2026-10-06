@@ -284,6 +284,17 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		QuotaDimension:          a.QuotaDimension,
 	}
 
+	// TLS 指纹适用于 Anthropic 与 OpenAI 的 OAuth/SetupToken 账号
+	if a.IsAnthropicOAuthOrSetupToken() || a.IsOpenAIOAuthLike() {
+		if a.IsTLSFingerprintEnabled() {
+			enabled := true
+			out.EnableTLSFingerprint = &enabled
+		}
+		if profileID := a.GetTLSFingerprintProfileID(); profileID > 0 {
+			out.TLSFingerprintProfileID = &profileID
+		}
+	}
+
 	// 提取 5h 窗口费用控制和会话数量控制配置（仅 Anthropic OAuth/SetupToken 账号有效）
 	if a.IsAnthropicOAuthOrSetupToken() {
 		if limit := a.GetWindowCostLimit(); limit > 0 {
@@ -308,15 +319,6 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		// 用户消息队列模式
 		if mode := a.GetUserMsgQueueMode(); mode != "" {
 			out.UserMsgQueueMode = &mode
-		}
-		// TLS指纹伪装开关
-		if a.IsTLSFingerprintEnabled() {
-			enabled := true
-			out.EnableTLSFingerprint = &enabled
-		}
-		// TLS指纹模板ID
-		if profileID := a.GetTLSFingerprintProfileID(); profileID > 0 {
-			out.TLSFingerprintProfileID = &profileID
 		}
 		// 会话ID伪装开关
 		if a.IsSessionIDMaskingEnabled() {

@@ -747,6 +747,8 @@ export default {
         flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
         flattenNamespacesDesc:
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
+        tlsFingerprint: 'Codex CLI TLS 指纹',
+        tlsFingerprintDesc: '开启后，该账号发往 ChatGPT 的 HTTP 请求使用 Codex CLI（OpenSSL 3.5）的 TLS 握手，而不是 Go 默认握手；WebSocket 连接不受影响。建议先在少量账号上试用。',
         longContextBilling: 'API 长上下文计费',
         longContextBillingDesc: '默认关闭。仅当该账号的上游会按模型阈值收取 OpenAI API 长上下文费率时开启。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
@@ -1657,6 +1659,7 @@ export default {
       startingTestForAccount: '开始测试账号：{name}',
       testAccountTypeLabel: '账号类型：{type}',
       selectTestModel: '选择测试模型',
+      unlistedModelHint: '上游未列出',
       testModel: '测试模型',
       testPrompt: '提示词："hi"',
       imagePromptLabel: '生图提示词',

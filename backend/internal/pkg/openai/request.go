@@ -315,6 +315,37 @@ func SetCodexUserAgentVersion(userAgent, version string) string {
 	return rewriteCodexUATrailerVersion(client+"/"+version+tail, version)
 }
 
+// EnsureCodexUATrailer 在 UA 缺少尾部官方客户端标识组时补上 `(originator; version)`。
+// 真实 Codex 客户端经 app-server 初始化后都会追加这一组（clientInfo.name/version），
+// 缺少它的 UA 形态不是真实客户端能发出的。已有官方标识组或参数缺失时原样返回。
+func EnsureCodexUATrailer(userAgent, originator, version string) string {
+	ua := strings.TrimSpace(userAgent)
+	originator = strings.TrimSpace(originator)
+	version = strings.TrimSpace(version)
+	if ua == "" || originator == "" || version == "" || hasCodexUATrailer(ua) {
+		return ua
+	}
+	return ua + " (" + originator + "; " + version + ")"
+}
+
+// hasCodexUATrailer 判断 UA 最后一个括号组是否为官方客户端标识 `(name; version)`。
+func hasCodexUATrailer(ua string) bool {
+	open := strings.LastIndex(ua, "(")
+	if open < 0 {
+		return false
+	}
+	closeIdx := strings.Index(ua[open+1:], ")")
+	if closeIdx < 0 {
+		return false
+	}
+	inner := ua[open+1 : open+1+closeIdx]
+	semi := strings.Index(inner, ";")
+	if semi < 0 {
+		return false
+	}
+	return IsCodexOfficialClientOriginator(strings.TrimSpace(inner[:semi]))
+}
+
 // rewriteCodexUATrailerVersion 把尾部官方客户端标识组 `(name; version)` 的版本改成 version。
 // 括号组缺少 `;` 分隔的版本、或 name 不是官方 originator 时原样返回。
 func rewriteCodexUATrailerVersion(ua, version string) string {

@@ -104,7 +104,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		anthropicBody = s.applyClaudeCodeOAuthMimicryToBody(ctx, c, account, anthropicBody, anthropicReq.System, mappedModel)
 	}
 
-	// 7. Enforce cache_control block limit
+	// 7. 注入随对话前进的缓存断点并强制执行 cache_control 块数量限制。
+	// Chat Completions 客户端同样不带 cache_control，不注入断点的话每轮
+	// 只有 cache_read，新增长的内容永远不写缓存。
+	anthropicBody = applyResponsesAnthropicCacheBreakpoints(anthropicBody, mappedModel)
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
 	// 8. Get access token
@@ -277,7 +280,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
-			if idx < len(finalResp.Content) {
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -378,6 +381,11 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	// 客户端断开后只停止写出，继续读上游直到 message_stop，末尾 message_delta 的用量照常计费。
+	clientDisconnected := false
+	sawMessageStop := false
+	drain := newAnthropicCompatDrain(s.cfg, resp.Body)
+	defer drain.stop()
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -388,15 +396,16 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:       requestID,
-			UpstreamHeaders: resp.Header,
-			Usage:           usage,
-			Model:           originalModel,
-			UpstreamModel:   mappedModel,
-			ReasoningEffort: reasoningEffort,
-			Stream:          true,
-			Duration:        time.Since(startTime),
-			FirstTokenMs:    firstTokenMs,
+			RequestID:        requestID,
+			UpstreamHeaders:  resp.Header,
+			Usage:            usage,
+			Model:            originalModel,
+			UpstreamModel:    mappedModel,
+			ReasoningEffort:  reasoningEffort,
+			Stream:           true,
+			Duration:         time.Since(startTime),
+			FirstTokenMs:     firstTokenMs,
+			ClientDisconnect: clientDisconnected,
 		}
 	}
 
@@ -418,13 +427,18 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		if event == nil {
 			return false
 		}
-		// Drop Anthropic keepalive pings before OpenAI conversion:
-		// leaking `event: ping` frames crashes OpenAI-stream clients.
-		// Error events must still forward — they carry upstream failures.
 		if event.Type == "ping" {
+			if clientDisconnected {
+				return false
+			}
+			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {
+				return true
+			}
+			c.Writer.Flush()
 			return false
 		}
-		if firstChunk {
+		// ping 写失败时客户端从未收到正文，断开后继续排水的事件不能再记首字时间。
+		if firstChunk && !clientDisconnected {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -437,6 +451,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// Also capture usage from message_start (carries cache fields)
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
+		}
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+		}
+		if clientDisconnected {
+			return false
 		}
 
 		// Keep the outward Responses/Chat usage on the same normalized buckets used
@@ -459,6 +479,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	for scanner.Scan() {
+		drain.touch()
 		line := scanner.Text()
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
@@ -483,17 +504,26 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		ccState.IncludeUsage = ccState.IncludeUsage || anthropicChatStreamHasUsage(&event, payload)
 
 		if processAnthropicEvent(&event) {
-			return resultWithUsage(), nil
+			clientDisconnected = true
+			drain.start()
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	readErr := scanner.Err()
+	if readErr != nil {
+		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
 			logger.L().Warn("forward_as_cc stream: read error",
-				zap.Error(err),
+				zap.Error(readErr),
 				zap.String("request_id", requestID),
 			)
 		}
+	}
+	if !sawMessageStop {
+		// 截断的上游不补发合成的完成事件，按错误返回并带上已计量的用量。
+		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
+	}
+	if clientDisconnected {
+		return resultWithUsage(), nil
 	}
 
 	// Finalize both state machines
