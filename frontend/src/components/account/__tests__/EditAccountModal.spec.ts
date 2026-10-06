@@ -990,6 +990,50 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('images_url_to_b64_json')
   })
 
+  it('submits the Codex TLS fingerprint toggle for OpenAI OAuth accounts', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-openai-tls-fingerprint-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.enable_tls_fingerprint).toBe(true)
+  })
+
+  it('clears the Codex TLS fingerprint keys when switched off', async () => {
+    const account = { ...buildAccount(), enable_tls_fingerprint: true }
+    account.type = 'oauth'
+    account.extra = { enable_tls_fingerprint: true, tls_fingerprint_profile_id: 7 }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="edit-openai-tls-fingerprint-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).not.toHaveProperty('enable_tls_fingerprint')
+    expect(extra).not.toHaveProperty('tls_fingerprint_profile_id')
+  })
+
+  it('hides the Codex TLS fingerprint toggle for OpenAI API key accounts', async () => {
+    const account = buildAccount()
+    account.type = 'apikey'
+
+    const wrapper = mountModal(account)
+
+    expect(wrapper.find('[data-testid="edit-openai-tls-fingerprint-toggle"]').exists()).toBe(false)
+  })
+
   it('hides the Codex namespace flatten toggle for non-OAuth OpenAI accounts', async () => {
     const account = buildAccount()
     const wrapper = mountModal(account)
