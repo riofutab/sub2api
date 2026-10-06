@@ -98,9 +98,9 @@ var openCodeGoUsageLimitResetPattern = regexp.MustCompile(`(?i)\bresets\s+in\s+`
 var openCodeGoUsageLimitDurationPartPattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)\b`)
 
 const (
-	openAI403CooldownMinutesDefault = 10
+	openAI403CooldownMinutesDefault = 60
 	openAI403DisableThreshold       = 3
-	openAI403CounterWindowMinutes   = 180
+	openAI403CounterWindowMinutes   = 360
 	maxOpenAI403CooldownMinutes     = 1440
 	maxOpenAI403DisableThreshold    = 100
 	maxOpenAI403WindowMinutes       = 1440
@@ -1231,12 +1231,22 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			return
 		}
 	}
+	// 积分额度可用的 OpenAI 账号：套餐窗口耗尽后上游允许继续消耗 Codex credits
+	// 提供服务（响应头 x-codex-credits-*，或本地 codex_credits_snapshot 快照）。
+	// 若按"窗口耗尽"冻结到窗口重置（数天），积分可用期内账号将完全不可调度。
+	// 此时改用分钟级冷却（openAICodexCredits429Cooldown），到期后由上游再次裁决。
+	codexCreditsAvailable := account.Platform == PlatformOpenAI && openAICodexCreditsAvailable(account, headers, time.Now())
+
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
 		persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
 		notifyOpenAIAutoReset(account.ID)
 		if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
+			if codexCreditsAvailable {
+				s.applyOpenAICodexCredits429Cooldown(ctx, account, *resetAt)
+				return
+			}
 			s.notifyAccountSchedulingBlocked(account, *resetAt, "429")
 			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
 				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -1279,6 +1289,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 OpenAI 的 usage_limit_reached 错误
 			if resetAt := parseOpenAIRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
+				if codexCreditsAvailable {
+					s.applyOpenAICodexCredits429Cooldown(ctx, account, resetTime)
+					return
+				}
 				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -1344,6 +1358,18 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	}
 
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)
+}
+
+// applyOpenAICodexCredits429Cooldown 处理窗口耗尽但积分可用的 OpenAI 429：
+// 冷却 openAICodexCredits429Cooldown（不晚于窗口重置），而不是冻结到窗口重置。
+func (s *RateLimitService) applyOpenAICodexCredits429Cooldown(ctx context.Context, account *Account, windowResetAt time.Time) {
+	until := openAICodexCredits429CooldownUntil(&windowResetAt, time.Now())
+	s.notifyAccountSchedulingBlocked(account, until, "429_credits")
+	if err := s.accountRepo.SetRateLimited(ctx, account.ID, until); err != nil {
+		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	slog.Info("openai_429_credits_available_short_cooldown", "account_id", account.ID, "reset_at", until, "window_reset_at", windowResetAt)
 }
 
 func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, account *Account, reason string) {
@@ -2666,6 +2692,17 @@ func firstRequestedModel(requestedModel []string) string {
 	return strings.TrimSpace(requestedModel[0])
 }
 
+// tempUnschedRuleUsesModelScope 决定一次命中按模型级冷却还是账号级暂停。
+// 401 是账号凭证失效，且 tryTempUnschedulable 的 401 升级依赖账号级 reason，
+// 因此无论 scope 如何都按账号级处理；模型未知时无法隔离，也按账号级。
+// 其余情况：显式 scope 由规则决定，scope 为空时走模型级。
+func tempUnschedRuleUsesModelScope(rule TempUnschedulableRule, modelKey string, statusCode int) bool {
+	if statusCode == http.StatusUnauthorized || strings.TrimSpace(modelKey) == "" {
+		return false
+	}
+	return rule.Scope != TempUnschedScopeAccount
+}
+
 type tempUnschedulableModelContextKey struct{}
 
 func withTempUnschedulableModel(ctx context.Context, requestedModel []string) context.Context {
@@ -2798,6 +2835,8 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 
 	now := time.Now()
 	until := now.Add(time.Duration(rule.DurationMinutes) * time.Minute)
+	modelKey := firstRequestedModel(requestedModel)
+	modelScoped := tempUnschedRuleUsesModelScope(rule, modelKey, statusCode)
 
 	state := &TempUnschedState{
 		UntilUnix:       until.Unix(),
@@ -2806,6 +2845,11 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 		MatchedKeyword:  matchedKeyword,
 		RuleIndex:       ruleIndex,
 		ErrorMessage:    truncateTempUnschedMessage(responseBody, tempUnschedMessageMaxBytes),
+		Scope:           TempUnschedScopeAccount,
+	}
+	if modelScoped {
+		state.Scope = TempUnschedScopeModel
+		state.Model = modelKey
 	}
 
 	reason := ""
@@ -2816,18 +2860,16 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 		reason = strings.TrimSpace(state.ErrorMessage)
 	}
 
-	// Persist known-model failures under the model key so the scheduler excludes
-	// only this (account, model) pair. Authentication and model-unknown failures
-	// retain the legacy account-wide temporary-unschedulable behavior below.
-	modelKey := firstRequestedModel(requestedModel)
-	if modelKey != "" && statusCode != http.StatusUnauthorized {
+	// Persist model-scoped hits under the model key so the scheduler excludes
+	// only this (account, model) pair; every other hit pauses the whole account below.
+	if modelScoped {
 		if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, until, reason); err != nil {
 			slog.Warn("temp_unsched_model_rate_limit_set_failed", "account_id", account.ID, "model", modelKey, "error", err)
 			// The rule matched, so fail over the current request even if persistence
 			// failed; never widen a model-scoped failure into an account-wide block.
 			return true
 		}
-		slog.Info("account_model_temp_unschedulable", "account_id", account.ID, "model", modelKey, "until", until, "rule_index", ruleIndex, "status_code", statusCode)
+		slog.Info("account_model_temp_unschedulable", "account_id", account.ID, "model", modelKey, "until", until, "rule_index", ruleIndex, "rule_scope", rule.Scope, "status_code", statusCode)
 		return true
 	}
 
@@ -2843,7 +2885,7 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 		}
 	}
 
-	slog.Info("account_temp_unschedulable", "account_id", account.ID, "until", until, "rule_index", ruleIndex, "status_code", statusCode)
+	slog.Info("account_temp_unschedulable", "account_id", account.ID, "until", until, "rule_index", ruleIndex, "rule_scope", rule.Scope, "status_code", statusCode)
 	return true
 }
 

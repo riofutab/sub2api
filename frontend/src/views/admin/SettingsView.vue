@@ -6006,15 +6006,13 @@
                       )
                     }}
                   </p>
-                  <p
-                    v-if="codexSyncedVersionLabel"
-                    class="mt-0.5 text-xs text-gray-500 dark:text-gray-400"
-                  >
-                    {{ codexSyncedVersionLabel }}
-                  </p>
                 </div>
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
               </div>
+              <CodexVersionSyncStatus
+                :active="activeTab === 'gateway'"
+                :refresh-token="codexSyncRefreshToken"
+              />
 
               <!-- Claude Code 客户端版本号 -->
               <div>
@@ -9220,6 +9218,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import CodexVersionSyncStatus from "@/views/admin/settings/CodexVersionSyncStatus.vue";
 import RechargeBonusTierEditor from "@/components/admin/settings/RechargeBonusTierEditor.vue";
 import {
   normalizeRechargeBonusMode,
@@ -9418,9 +9417,9 @@ const openAI403CooldownLoading = ref(true);
 const openAI403CooldownSaving = ref(false);
 const openAI403CooldownForm = reactive({
   enabled: true,
-  cooldown_minutes: 10,
+  cooldown_minutes: 60,
   disable_threshold: 3,
-  window_minutes: 180,
+  window_minutes: 360,
 });
 
 // Panel API Rate Limit 状态
@@ -11240,13 +11239,7 @@ function removeCodexWhitelistRow(i: number): void {
   codexWhitelistRows.value.splice(i, 1);
 }
 
-const codexSyncedVersionLabel = computed(() => {
-  const synced = form.openai_codex_client_version_synced?.trim();
-  if (!synced) return "";
-  return t("admin.settings.gatewayForwarding.openaiCodexVersionSyncedValue", {
-    version: synced,
-  });
-});
+const codexSyncRefreshToken = ref(0);
 
 const claudeSyncedVersionLabel = computed(() => {
   const synced = form.claude_code_client_version_synced?.trim();
@@ -12065,6 +12058,7 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    codexSyncRefreshToken.value++;
     if (updated.openai_oauth_scheduling_rate_multiplier === null) {
       form.openai_oauth_scheduling_rate_multiplier = null;
     }

@@ -48,9 +48,9 @@ func TestGetOpenAI403CooldownSettings_DefaultsWhenNotSet(t *testing.T) {
 	require.NoError(t, err)
 	// MUTATION-SANITY: changing any OpenAI 403 default constant makes these assertions fail.
 	require.True(t, settings.Enabled)
-	require.Equal(t, 10, settings.CooldownMinutes)
+	require.Equal(t, 60, settings.CooldownMinutes)
 	require.Equal(t, 3, settings.DisableThreshold)
-	require.Equal(t, 180, settings.WindowMinutes)
+	require.Equal(t, 360, settings.WindowMinutes)
 }
 
 func TestGetOpenAI403CooldownSettings_ClampsOutOfRange(t *testing.T) {
@@ -124,9 +124,9 @@ func TestSetOpenAI403CooldownSettings_NormalizesWhenDisabled(t *testing.T) {
 	require.NoError(t, err)
 	// MUTATION-SANITY: changing the disabled branch to reject invalid values fails before this normalized result.
 	require.False(t, stored.Enabled)
-	require.Equal(t, 10, stored.CooldownMinutes)
+	require.Equal(t, 60, stored.CooldownMinutes)
 	require.Equal(t, 3, stored.DisableThreshold)
-	require.Equal(t, 180, stored.WindowMinutes)
+	require.Equal(t, 360, stored.WindowMinutes)
 }
 
 func TestHandleOpenAI403_UsesConfiguredCooldownMinutes(t *testing.T) {
@@ -206,9 +206,9 @@ func TestHandleOpenAI403_FallsBackToDefaultsWithoutSettingService(t *testing.T) 
 
 	require.True(t, h.handle(`{"error":{"message":"temporary edge rejection"}}`))
 
-	// MUTATION-SANITY: breaking the no-service fallback changes the 10-minute duration or 180-minute window.
-	require.WithinDuration(t, before.Add(10*time.Minute), recorder.until, 5*time.Second)
-	require.Equal(t, []int{180}, counter.windows)
+	// MUTATION-SANITY: breaking the no-service fallback changes the 60-minute duration or 360-minute window.
+	require.WithinDuration(t, before.Add(60*time.Minute), recorder.until, 5*time.Second)
+	require.Equal(t, []int{360}, counter.windows)
 }
 
 func TestHandleOpenAI403_HTMLBodyStillSkipsPenaltyWhenEnabled(t *testing.T) {

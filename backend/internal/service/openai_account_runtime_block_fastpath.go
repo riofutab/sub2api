@@ -230,7 +230,11 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 
 	now := time.Now()
 	cooldownUntil := now.Add(openAIOAuth429FallbackCooldown)
-	if resetAt != nil && resetAt.After(now) {
+	if disposition != openAIOAuth429Transient && openAICodexCreditsAvailable(account, headers, now) {
+		// 与 RateLimitService.handle429 一致：窗口耗尽但积分可用时只做分钟级冷却，
+		// 否则这里的内存运行时熔断仍会把账号挡到窗口重置。
+		cooldownUntil = openAICodexCredits429CooldownUntil(resetAt, now)
+	} else if resetAt != nil && resetAt.After(now) {
 		cooldownUntil = *resetAt
 	} else if s.rateLimitService != nil {
 		cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account)
