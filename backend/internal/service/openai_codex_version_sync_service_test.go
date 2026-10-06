@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -334,7 +335,7 @@ func TestGetOpenAICodexCanonicalUserAgentBuildsFromVersion(t *testing.T) {
 	}}, nil)
 
 	require.Equal(t,
-		"codex-tui/0.200.1"+codexCLIUserAgentSuffix,
+		"codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)",
 		svc.GetOpenAICodexCanonicalUserAgent(context.Background()),
 	)
 }
@@ -528,7 +529,7 @@ func TestGetOpenAICodexCanonicalUserAgentOutboundIdentity(t *testing.T) {
 				})
 				require.Equal(t, wantUA, svc.GetOpenAICodexCanonicalUserAgent(context.Background()))
 				identity := resolveCodexOutboundIdentity("")
-				require.Equal(t, wantUA, identity.userAgent)
+				require.Equal(t, openai.EnsureCodexUATrailer(wantUA, wantOriginator, version.want), identity.userAgent)
 				require.Equal(t, wantOriginator, identity.originator)
 				require.Equal(t, version.want, identity.version)
 			})

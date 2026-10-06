@@ -1026,7 +1026,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthHonorsAccountUserAgent(t *testin
 	require.NotNil(t, result)
 	require.Equal(t, "codex-tui", captureDialer.lastHeaders.Get("originator"))
 	require.Equal(t,
-		"codex-tui/"+codexCLIVersion+" (Mac OS X 15.1.0; arm64) iTerm.app",
+		"codex-tui/"+codexCLIVersion+" (Mac OS X 15.1.0; arm64) iTerm.app (codex-tui; "+codexCLIVersion+")",
 		captureDialer.lastHeaders.Get("user-agent"),
 	)
 	require.Equal(t, codexCLIVersion, captureDialer.lastHeaders.Get("version"))
