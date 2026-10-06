@@ -1231,12 +1231,22 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			return
 		}
 	}
+	// 积分额度可用的 OpenAI 账号：套餐窗口耗尽后上游允许继续消耗 Codex credits
+	// 提供服务（响应头 x-codex-credits-*，或本地 codex_credits_snapshot 快照）。
+	// 若按"窗口耗尽"冻结到窗口重置（数天），积分可用期内账号将完全不可调度。
+	// 此时改用分钟级冷却（openAICodexCredits429Cooldown），到期后由上游再次裁决。
+	codexCreditsAvailable := account.Platform == PlatformOpenAI && openAICodexCreditsAvailable(account, headers, time.Now())
+
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
 		persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
 		notifyOpenAIAutoReset(account.ID)
 		if resetAt := s.calculateOpenAI429ResetTime(headers); resetAt != nil {
+			if codexCreditsAvailable {
+				s.applyOpenAICodexCredits429Cooldown(ctx, account, *resetAt)
+				return
+			}
 			s.notifyAccountSchedulingBlocked(account, *resetAt, "429")
 			if err := s.accountRepo.SetRateLimited(ctx, account.ID, *resetAt); err != nil {
 				slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -1279,6 +1289,10 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			// 尝试解析 OpenAI 的 usage_limit_reached 错误
 			if resetAt := parseOpenAIRateLimitResetTime(responseBody); resetAt != nil {
 				resetTime := time.Unix(*resetAt, 0)
+				if codexCreditsAvailable {
+					s.applyOpenAICodexCredits429Cooldown(ctx, account, resetTime)
+					return
+				}
 				s.notifyAccountSchedulingBlocked(account, resetTime, "429")
 				if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 					slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -1344,6 +1358,18 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	}
 
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)
+}
+
+// applyOpenAICodexCredits429Cooldown 处理窗口耗尽但积分可用的 OpenAI 429：
+// 冷却 openAICodexCredits429Cooldown（不晚于窗口重置），而不是冻结到窗口重置。
+func (s *RateLimitService) applyOpenAICodexCredits429Cooldown(ctx context.Context, account *Account, windowResetAt time.Time) {
+	until := openAICodexCredits429CooldownUntil(&windowResetAt, time.Now())
+	s.notifyAccountSchedulingBlocked(account, until, "429_credits")
+	if err := s.accountRepo.SetRateLimited(ctx, account.ID, until); err != nil {
+		slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
+		return
+	}
+	slog.Info("openai_429_credits_available_short_cooldown", "account_id", account.ID, "reset_at", until, "window_reset_at", windowResetAt)
 }
 
 func (s *RateLimitService) apply429FallbackRateLimit(ctx context.Context, account *Account, reason string) {
