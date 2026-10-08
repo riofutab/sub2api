@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 type antigravityCompatStreamAdapter interface {
@@ -115,6 +116,7 @@ type antigravityCompatStreamSession struct {
 	firstTokenMs                *int
 	startTime                   time.Time
 	meaningfulData              bool
+	sawFinishReason             bool
 	preContentKeepaliveSent     bool
 	preContentKeepaliveInterval time.Duration
 }
@@ -142,6 +144,7 @@ func newAntigravityCompatStreamSession(
 }
 
 func (s *antigravityCompatStreamSession) consume(line string) {
+	s.noteFinishReason(line)
 	claudeEvents := s.processor.ProcessLine(strings.TrimRight(line, "\r\n"))
 	if len(claudeEvents) == 0 {
 		return
@@ -150,7 +153,42 @@ func (s *antigravityCompatStreamSession) consume(line string) {
 }
 
 func (s *antigravityCompatStreamSession) hasMeaningfulData() bool {
-	return s.meaningfulData || s.processor.HasContent()
+	return s.meaningfulData || s.processor.HasContent() || s.sawFinishReason
+}
+
+// noteFinishReason records a terminal candidate finishReason so a signature-only
+// or empty-part packet is a finished step, not an empty stream. Content-filter
+// reasons stay on the existing signal path and still fail over.
+func (s *antigravityCompatStreamSession) noteFinishReason(line string) {
+	if s.sawFinishReason {
+		return
+	}
+	reason := antigravityCompatCandidateFinishReason(line)
+	if reason == "" || isGeminiContentFilterFinishReason(reason) || reason == "MALFORMED_FUNCTION_CALL" {
+		return
+	}
+	s.sawFinishReason = true
+}
+
+// antigravityCompatCandidateFinishReason 每个 SSE 行都会调用：先用子串判断跳过
+// 绝大多数不带 finishReason 的增量行，命中后只用 gjson 取目标字段，不再做完整解码。
+func antigravityCompatCandidateFinishReason(line string) string {
+	if !strings.Contains(line, `"finishReason"`) {
+		return ""
+	}
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "data:") {
+		return ""
+	}
+	data := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+	if data == "" || data == "[DONE]" {
+		return ""
+	}
+	candidates := gjson.Get(data, "candidates")
+	if response := gjson.Get(data, "response"); response.Exists() {
+		candidates = response.Get("candidates")
+	}
+	return strings.ToUpper(strings.TrimSpace(candidates.Get("0.finishReason").String()))
 }
 
 func (s *antigravityCompatStreamSession) writePreContentKeepalive(now time.Time) {
@@ -168,6 +206,9 @@ func (s *antigravityCompatStreamSession) finish() (*antigravityStreamResult, err
 	finalEvents, usage := s.processor.Finish()
 	mergeAntigravityCompatUsage(s.usage, usage)
 	s.consumeClaudeEvents(finalEvents)
+	if s.sawFinishReason && !s.meaningfulData && !s.writer.Disconnected() {
+		s.flushPendingEvents()
+	}
 	if !s.hasMeaningfulData() && !s.writer.Disconnected() {
 		if s.preContentKeepaliveSent {
 			s.adapter.WriteError(s.writer, "empty_stream")
@@ -237,6 +278,10 @@ func (s *antigravityCompatStreamSession) emitOrBuffer(event apicompat.AnthropicS
 	s.meaningfulData = true
 	ms := int(time.Since(s.startTime).Milliseconds())
 	s.firstTokenMs = &ms
+	s.flushPendingEvents()
+}
+
+func (s *antigravityCompatStreamSession) flushPendingEvents() {
 	for i := range s.pendingEvents {
 		s.adapter.Emit(&s.pendingEvents[i], s.writer)
 	}
@@ -508,11 +553,13 @@ func writeAntigravityCompatStreamError(
 }
 
 func antigravityCompatEmptyStreamError() error {
-	logger.LegacyPrintf("service.antigravity_gateway", "Empty Antigravity compatibility stream, triggering failover")
+	logger.LegacyPrintf("service.antigravity_gateway", "Empty Antigravity compatibility stream, retrying same account only")
 	return &UpstreamFailoverError{
 		StatusCode:             http.StatusBadGateway,
 		ResponseBody:           []byte(`{"error":"empty stream response from upstream"}`),
 		RetryableOnSameAccount: true,
+		RequestScopedTransient: true,
+		NextAccountAction:      NextAccountStop,
 	}
 }
 
