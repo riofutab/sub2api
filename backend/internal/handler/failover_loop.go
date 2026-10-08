@@ -205,7 +205,7 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverCanceled
 	}
 	s.LastFailoverErr = failoverErr
-	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
+	if failoverErr == nil {
 		return FailoverExhausted
 	}
 
@@ -232,6 +232,11 @@ func (s *FailoverState) HandleFailoverError(
 			return FailoverCanceled
 		}
 		return FailoverContinue
+	}
+
+	// 同账号重试用尽。明确禁止换号的错误停在这里，不摘号、不打穿号池。
+	if !failoverErr.ShouldRetryNextAccount() {
+		return FailoverExhausted
 	}
 
 	// 同账号重试用尽，执行临时封禁

@@ -53,6 +53,9 @@ func referenceParseGatewayRequest(body []byte, protocol string) (parsedRequestSn
 	if !gjson.ValidBytes(body) {
 		return snap, DescribeInvalidJSON(body)
 	}
+	if HasDuplicateTopLevelKey(body, "model") {
+		return snap, ErrDuplicateModelKey
+	}
 	jsonStr := string(body)
 	if modelResult := gjson.Get(jsonStr, "model"); modelResult.Exists() {
 		if modelResult.Type != gjson.String {
@@ -141,6 +144,8 @@ func TestParseGatewayRequest_MatchesPerFieldGJSONSemantics(t *testing.T) {
 	bodies := []string{
 		`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}],"system":"sys","metadata":{"user_id":"u1"},"max_tokens":1024,"thinking":{"type":"enabled","budget_tokens":1000},"stream":true,"output_config":{"effort":" high "},"speed":" FAST "}`,
 		`{"model":"a","model":"b","stream":false,"stream":true,"messages":{"not":"array"},"messages":[1]}`,
+		`{"model":"a","stream":false,"stream":true,"messages":{"not":"array"},"messages":[1]}`,
+		`{"model":"a","Model":"b"}`,
 		`{"metadata":{"x":1},"metadata":{"user_id":"second"},"thinking":"str","thinking":{"type":"adaptive"}}`,
 		`{"metadata":[{"user_id":"in-array"}],"thinking":[{"type":"enabled"}],"output_config":{"effort":null}}`,
 		`{"mod` + jsonUnicodeEscapeForTest("0065") + `l":"escaped-key","m` + jsonUnicodeEscapeForTest("0065") + `ssages":[{"role":"user"}],"` + jsonUnicodeEscapeForTest("0073") + `ystem":null}`,

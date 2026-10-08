@@ -163,6 +163,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	bodyRef := service.NewRequestBodyRef(body)
 	parsedReq, err := service.ParseGatewayRequest(bodyRef, domain.PlatformAnthropic)
 	if err != nil {
+		// 重复的 model 键会被不同解析器绑定到不同值（gjson 首键 vs encoding/json 末键），在边界直接拒绝。
+		// 检测复用 ParseGatewayRequest 的顶层遍历，不额外扫描请求体。
+		if errors.Is(err, service.ErrDuplicateModelKey) {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
 		logRequestBodyParseFailure(reqLog, body, err)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
