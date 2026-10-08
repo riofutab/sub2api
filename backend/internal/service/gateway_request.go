@@ -175,6 +175,8 @@ type gatewayTopLevelFields struct {
 	input          gjson.Result
 	systemParts    gjson.Result // systemInstruction.parts（Gemini）
 	contents       gjson.Result
+	sawModelKey    bool
+	duplicateModel bool // 顶层出现多个 model 键（大小写不敏感）
 }
 
 // collectGatewayTopLevelFields 用一次顶层 ForEach 代替逐字段 gjson.Get（每次 Get 都可能扫过整个
@@ -207,6 +209,11 @@ func collectGatewayTopLevelFields(jsonStr string) gatewayTopLevelFields {
 	}
 	root := gjson.Result{Type: gjson.JSON, Raw: jsonStr}
 	root.ForEach(func(key, value gjson.Result) bool {
+		// 复用这次顶层遍历检测重复 model 键（含大小写变体），省掉入口处的额外扫描。
+		if len(key.Str) == len("model") && strings.EqualFold(key.Str, "model") {
+			f.duplicateModel = f.sawModelKey
+			f.sawModelKey = true
+		}
 		switch key.Str {
 		case "model":
 			firstOf(&f.model, value)
@@ -268,6 +275,9 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	parsed.protocol = protocol
 
 	fields := collectGatewayTopLevelFields(jsonStr)
+	if fields.duplicateModel {
+		return ErrDuplicateModelKey
+	}
 	if modelResult := fields.model; modelResult.Exists() {
 		if modelResult.Type != gjson.String {
 			return fmt.Errorf("invalid model field type")

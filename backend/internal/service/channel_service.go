@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -637,15 +639,62 @@ func checkRestricted(lk *channelLookup, groupID int64, model string) bool {
 	return true
 }
 
+// ErrDuplicateModelKey 表示请求体顶层出现了多个 model 键（含大小写变体）。
+var ErrDuplicateModelKey = errors.New("model is specified more than once")
+
+// HasDuplicateTopLevelKey 判断 JSON 对象顶层是否存在重复的指定键（大小写不敏感）。
+// RFC 8259 不强制拒绝重复键，而不同解析器对重复键的绑定值不一致
+// （gjson 取首键且大小写敏感，encoding/json 取末键且大小写不敏感，常见上游运行时取末键），
+// 重复的 model 键会让「计费/准入校验」与「实际转发执行」指向不同模型。网关边界应拒绝。
+// 只检查顶层：嵌套对象里的同名键（如 messages、tools 内部结构）是合法内容。
+func HasDuplicateTopLevelKey(body []byte, key string) bool {
+	return hasDuplicateTopLevelKeyMatching(body, func(k string) bool { return strings.EqualFold(k, key) })
+}
+
+// hasDuplicateTopLevelKeyMatching 零拷贝遍历顶层键；每个请求都会走这里，
+// 不能用 gjson.ParseBytes（会把整个请求体复制成 string）。
+func hasDuplicateTopLevelKeyMatching(body []byte, matches func(string) bool) bool {
+	if len(body) == 0 {
+		return false
+	}
+	root := gjson.Result{Type: gjson.JSON, Raw: unsafe.String(unsafe.SliceData(body), len(body))}
+	seen, duplicate := false, false
+	root.ForEach(func(k, _ gjson.Result) bool {
+		if !matches(k.Str) {
+			return true
+		}
+		if seen {
+			duplicate = true
+			return false
+		}
+		seen = true
+		return true
+	})
+	return duplicate
+}
+
 // ReplaceModelInBody 替换请求体 JSON 中的 model 字段。
+// 若请求体携带重复 model 键，sjson 只改写第一个键，剩余键会被末键优先的
+// 上游解析器执行，因此先把重复键收敛为单一键（保留最后一个键的原位，
+// 其余键的相对顺序不变），再写入新值。大小写变体由入口的 HasDuplicateTopLevelKey 拒绝；
+// 这里按精确键名收敛，保证每轮循环都删掉一个键。
 func ReplaceModelInBody(body []byte, newModel string) []byte {
 	if len(body) == 0 {
 		return body
 	}
-	if current := gjson.GetBytes(body, "model"); current.Exists() && current.String() == newModel {
-		return body
+	stripped := body
+	isModelKey := func(k string) bool { return k == "model" }
+	for hasDuplicateTopLevelKeyMatching(stripped, isModelKey) {
+		next, err := sjson.DeleteBytes(stripped, "model")
+		if err != nil || len(next) >= len(stripped) {
+			return body
+		}
+		stripped = next
 	}
-	newBody, err := sjson.SetBytes(body, "model", newModel)
+	if current := gjson.GetBytes(stripped, "model"); current.Exists() && current.String() == newModel {
+		return stripped
+	}
+	newBody, err := sjson.SetBytes(stripped, "model", newModel)
 	if err != nil {
 		return body
 	}

@@ -223,6 +223,9 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 		if !gjson.ValidBytes(body) {
 			return nil, fmt.Errorf("failed to parse request body")
 		}
+		if HasDuplicateTopLevelKey(body, "model") {
+			return nil, ErrDuplicateModelKey
+		}
 		if parseErr := parseOpenAIImagesJSONRequest(body, req); parseErr != nil {
 			return nil, parseErr
 		}
