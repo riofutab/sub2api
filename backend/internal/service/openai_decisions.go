@@ -17,8 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const openAIDecisionsUpstreamEndpoint = openai_decisions.Endpoint
-
 type OpenAIDecisionsForwardResult struct {
 	OpenAIForwardResult
 	StatusCode  int
@@ -131,7 +129,7 @@ func (s *OpenAIGatewayService) ForwardDecisions(ctx context.Context, c *gin.Cont
 		return nil, fmt.Errorf("read Decisions response: %w", err)
 	}
 	if len(responseBody) > 4<<20 {
-		return nil, errors.New("Decisions response exceeds the gateway size limit")
+		return nil, errors.New("decisions response exceeds the gateway size limit")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(responseBody)))

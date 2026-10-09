@@ -39,7 +39,10 @@ func object(raw json.RawMessage, fields ...string) (map[string]json.RawMessage, 
 		if err != nil {
 			return nil, reject("invalid object key")
 		}
-		key := token.(string)
+		key, ok := token.(string)
+		if !ok {
+			return nil, reject("invalid object key")
+		}
 		if seen[key] {
 			return nil, reject("duplicate field %q", key)
 		}
@@ -179,8 +182,8 @@ func allStringChoices(choices []decisions.Choice) bool {
 }
 
 func choiceKey(choices []decisions.Choice, index int) string {
-	if allStringChoices(choices) {
-		return choices[index].Value.(string)
+	if value, ok := choices[index].Value.(string); ok && allStringChoices(choices) {
+		return value
 	}
 	return "c" + strconv.Itoa(index)
 }
@@ -287,25 +290,33 @@ func nonnegativeInt(raw json.RawMessage, field string) (int, error) {
 	return n, nil
 }
 
+// usageInt 读取 usage() 已校验并写入的 token 计数。
+func usageInt(u map[string]any, key string) int {
+	n, _ := u[key].(int)
+	return n
+}
+
 func usage(raw json.RawMessage) (map[string]any, error) {
 	m, err := object(raw, "input_tokens", "output_tokens", "total_tokens", "input_tokens_details", "output_tokens_details")
 	if err != nil {
 		return nil, err
 	}
 	result := map[string]any{}
+	tokenSum := 0
 	for _, k := range []string{"input_tokens", "output_tokens"} {
 		n, err := nonnegativeInt(m[k], k)
 		if err != nil {
 			return nil, err
 		}
 		result[k] = n
+		tokenSum += n
 	}
 	if total, ok := m["total_tokens"]; ok {
 		n, err := nonnegativeInt(total, "total_tokens")
 		if err != nil {
 			return nil, err
 		}
-		if n != result["input_tokens"].(int)+result["output_tokens"].(int) {
+		if n != tokenSum {
 			return nil, reject("usage total_tokens mismatch")
 		}
 	}
@@ -377,9 +388,10 @@ func FromSystemOne(decisionsRequest, body []byte) ([]byte, error) {
 			return nil, err
 		}
 		allowed := []string{"type", "noul"}
-		if q.Type == "choice" {
+		switch q.Type {
+		case "choice":
 			allowed = []string{"type", "choice", "confidence", "probabilities"}
-		} else if q.Type == "score" {
+		case "score":
 			allowed = []string{"type", "score", "confidence", "probabilities", "legend"}
 		}
 		if _, err = object(raw, allowed...); err != nil {
@@ -481,7 +493,7 @@ func FromSystemOne(decisionsRequest, body []byte) ([]byte, error) {
 		}
 		answers[i] = out
 	}
-	u["total_tokens"] = u["input_tokens"].(int) + u["output_tokens"].(int)
+	u["total_tokens"] = usageInt(u, "input_tokens") + usageInt(u, "output_tokens")
 	result, err := encode(map[string]any{"model": decisions.Model, "answers": answers, "usage": u})
 	if err != nil {
 		return nil, err
@@ -534,9 +546,10 @@ func FromDecisions(systemOneRequest, decisionsRequest, body []byte) ([]byte, err
 			}
 		}
 		allowed := []string{"type", "name", "probability"}
-		if q.Type == "choice" {
+		switch q.Type {
+		case "choice":
 			allowed = []string{"type", "name", "choice", "confidence", "probabilities"}
-		} else if q.Type == "score" {
+		case "score":
 			allowed = []string{"type", "name", "score", "confidence", "probabilities"}
 		}
 		if _, err = object(resp.Answers[i], allowed...); err != nil {
@@ -637,6 +650,6 @@ func FromDecisions(systemOneRequest, decisionsRequest, body []byte) ([]byte, err
 		}
 		answers[id] = out
 	}
-	result, err := encode(map[string]any{"model": typesafe.JevLatestModel, "answers": answers, "usage": map[string]int{"input_tokens": u["input_tokens"].(int), "output_tokens": u["output_tokens"].(int)}})
+	result, err := encode(map[string]any{"model": typesafe.JevLatestModel, "answers": answers, "usage": map[string]int{"input_tokens": usageInt(u, "input_tokens"), "output_tokens": usageInt(u, "output_tokens")}})
 	return result, err
 }

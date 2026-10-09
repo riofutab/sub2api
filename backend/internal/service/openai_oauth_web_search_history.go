@@ -120,7 +120,7 @@ func ensureOpenAIOAuthWebSearchToolForHistory(reqBody map[string]any, responsesL
 	case !responsesLite:
 		reqBody["tools"] = append(tools, cloneOpenAIWebSearchHistoryTool())
 	case additionalToolsIndex >= 0:
-		item := input[additionalToolsIndex].(map[string]any)
+		item, _ := input[additionalToolsIndex].(map[string]any) // 上面的循环只记录对象条目的下标
 		existing, _ := item["tools"].([]any)
 		item["tools"] = append(existing, cloneOpenAIWebSearchHistoryTool())
 	default:

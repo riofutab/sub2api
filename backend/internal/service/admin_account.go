@@ -1027,7 +1027,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		for _, id := range input.AccountIDs {
 			account := targetsByID[id]
 			if account == nil {
-				return nil, errors.New("Decisions protocol target account not found")
+				return nil, errors.New("decisions protocol target account not found")
 			}
 			if err := validateOpenAIDecisionsCredentials(account.Platform, account.Type, input.Credentials); err != nil {
 				return nil, err

@@ -39,12 +39,18 @@ func TestBridgePreservesOrderedNamesAndTypedChoices(t *testing.T) {
 	if result.Model != Model || len(result.Answers) != 3 || result.Answers[0]["name"] != "duplicate" || result.Answers[1]["name"] != "duplicate" || result.Answers[2]["name"] != nil || result.Answers[1]["choice"] != true || *usage.InputTokens != 100 {
 		t.Fatalf("invalid bridge: %s", decoded)
 	}
-	probs := result.Answers[1]["probabilities"].([]any)
-	if probs[1].(map[string]any)["value"] != "true" {
+	probs, ok := result.Answers[1]["probabilities"].([]any)
+	if !ok || len(probs) < 2 {
+		t.Fatalf("choice probabilities missing: %s", decoded)
+	}
+	if entry, ok := probs[1].(map[string]any); !ok || entry["value"] != "true" {
 		t.Fatalf("boolean/string identity lost: %s", decoded)
 	}
-	levels := result.Answers[2]["probabilities"].([]any)
-	if levels[0].(map[string]any)["label"] != "Low" {
+	levels, ok := result.Answers[2]["probabilities"].([]any)
+	if !ok || len(levels) == 0 {
+		t.Fatalf("score probabilities missing: %s", decoded)
+	}
+	if entry, ok := levels[0].(map[string]any); !ok || entry["label"] != "Low" {
 		t.Fatalf("labels lost: %s", decoded)
 	}
 }
