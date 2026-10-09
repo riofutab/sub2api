@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -65,27 +66,10 @@ func doJSON(t *testing.T, router *gin.Engine, method, path, body string) *httpte
 	return w
 }
 
-// readTrackingBody 记录请求体是否被读取，用于断言快速路径零读取。
-type readTrackingBody struct {
-	io.Reader
-	read bool
-}
-
-func (b *readTrackingBody) Read(p []byte) (int, error) {
-	b.read = true
-	return b.Reader.Read(p)
-}
-
-func (b *readTrackingBody) Close() error { return nil }
-
-func TestGroupModelAllowlistDisabledDoesNotReadBody(t *testing.T) {
+func TestGroupModelAllowlistDisabledPassesUnambiguousModel(t *testing.T) {
 	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(false, "claude-sonnet-4.5"), "/v1")
 
-	body := &readTrackingBody{Reader: strings.NewReader(`{"model":"claude-opus-4.6"}`)}
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", body)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	w := doJSON(t, router, http.MethodPost, "/v1/messages", `{"model":"claude-opus-4.6"}`)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -93,8 +77,49 @@ func TestGroupModelAllowlistDisabledDoesNotReadBody(t *testing.T) {
 	if len(*calls) != 1 {
 		t.Fatalf("expected handler to run once, got %v", *calls)
 	}
-	if body.read {
-		t.Fatal("allowlist disabled: middleware must not read the request body")
+}
+
+// 白名单关闭时仍拒绝重复模型载体：合成路由按首个候选分发，handler 可能绑定末值。
+func TestGroupModelAllowlistDisabledStillRejectsDuplicateModel(t *testing.T) {
+	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(false), "/v1")
+
+	w := doJSON(t, router, http.MethodPost, "/v1/messages", `{"model":"a","Model":"b"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Type != "error" || resp.Error.Type != "invalid_request_error" || resp.Error.Message != "model is specified more than once" {
+		t.Fatalf("expected Anthropic invalid_request_error, got %s", w.Body.String())
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("expected handler not to run, got %v", *calls)
+	}
+}
+
+func TestGroupModelAllowlistDisabledLiveDuplicateSessionRejected(t *testing.T) {
+	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(false), "/v1")
+
+	for _, body := range []string{
+		`{"sdp":"v=0","session":{"model":"a"},"Session":{"model":"b"}}`,
+		`{"sdp":"v=0","session":{"model":"a","model":"b"}}`,
+	} {
+		w := doJSON(t, router, http.MethodPost, "/v1/live", body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("expected handler not to run, got %v", *calls)
 	}
 }
 
@@ -440,20 +465,20 @@ func TestGroupModelAllowlistCaseVariantModelKeyRejected(t *testing.T) {
 	}
 }
 
-// encoding/json 绑定对重复键取末值、gjson 取首个：两个值都必须通过校验。
+// encoding/json 绑定对重复键取末值、gjson 取首个：重复键直接拒绝。
 func TestGroupModelAllowlistDuplicateModelKeysRejected(t *testing.T) {
 	router, _ := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "claude-sonnet-4.5"), "/v1")
 
 	w := doJSON(t, router, http.MethodPost, "/v1/responses", `{"model":"claude-sonnet-4.5","model":"claude-opus-4.6"}`)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("duplicate model keys must all be validated, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate model keys must be rejected, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "claude-opus-4.6") {
-		t.Fatalf("expected the disallowed duplicate to be reported, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "model is specified more than once") {
+		t.Fatalf("expected duplicate model error, got %s", w.Body.String())
 	}
 }
 
-// 图片编辑的 multipart 解析器对重复 model 字段取末值：全部字段值都必须校验。
+// 图片编辑的 multipart 解析器对重复 model 字段取末值：重复字段直接拒绝。
 func TestGroupModelAllowlistMultipartDuplicateModelFieldsRejected(t *testing.T) {
 	router, _ := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "gpt-image-1"), "/v1")
 
@@ -469,16 +494,16 @@ func TestGroupModelAllowlistMultipartDuplicateModelFieldsRejected(t *testing.T) 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("duplicate multipart model fields must all be validated, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate multipart model fields must be rejected, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "gpt-image-1.5") {
-		t.Fatalf("expected the disallowed field value to be reported, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "model is specified more than once") {
+		t.Fatalf("expected duplicate model error, got %s", w.Body.String())
 	}
 }
 
-// 全部候选都在白名单内时放行（重复但同值的字段不误伤）。
-func TestGroupModelAllowlistDuplicateIdenticalModelsAllowed(t *testing.T) {
+// 同值重复也拒绝：重复载体与白名单内容无关。
+func TestGroupModelAllowlistDuplicateIdenticalModelsRejected(t *testing.T) {
 	router, calls := newGroupModelAllowlistTestRouter(allowlistAPIKey(true, "gpt-image-1"), "/v1")
 
 	var body bytes.Buffer
@@ -492,10 +517,10 @@ func TestGroupModelAllowlistDuplicateIdenticalModelsAllowed(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("identical duplicate fields should pass, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("identical duplicate fields must be rejected, got %d: %s", w.Code, w.Body.String())
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("expected handler to run once, got %v", *calls)
+	if len(*calls) != 0 {
+		t.Fatalf("expected handler not to run, got %v", *calls)
 	}
 }

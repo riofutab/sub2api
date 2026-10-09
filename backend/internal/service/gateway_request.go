@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -276,7 +277,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	fields := collectGatewayTopLevelFields(jsonStr)
 	if fields.duplicateModel {
-		return ErrDuplicateModelKey
+		return requestmodel.ErrDuplicateModelKey
 	}
 	if modelResult := fields.model; modelResult.Exists() {
 		if modelResult.Type != gjson.String {

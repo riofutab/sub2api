@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"strings"
 
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -122,8 +124,22 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 	c.Data(http.StatusOK, "application/sdp", created.SDP)
 }
 
+// liveCallRoutePath 让 requestmodel.ValidateBody 按 Live 规则检查 session 载体；
+// parseLiveCallRequest 只服务 Live 创建入口。
+const liveCallRoutePath = "/v1/live"
+
 func parseLiveCallRequest(c *gin.Context) (*service.LiveCallRequest, error) {
 	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+	if err != nil {
+		return nil, errors.New("failed to read request body")
+	}
+	// 重复的 session / session.model 会让合成路由（首个候选）与 handler（encoding/json 取末值）看到不同模型。
+	// Content-Type 传原值：multipart boundary 区分大小写。
+	if err := requestmodel.ValidateBody(liveCallRoutePath, c.GetHeader("Content-Type"), body); err != nil {
+		return nil, err
+	}
+	requestmodel.ResetRequestBody(c.Request, body)
 	if strings.HasPrefix(contentType, "multipart/form-data") {
 		sdp := c.PostForm("sdp")
 		session := json.RawMessage(c.PostForm("session"))

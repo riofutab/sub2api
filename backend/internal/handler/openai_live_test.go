@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -118,4 +119,36 @@ func jsonPathString(t *testing.T, raw json.RawMessage, keys ...string) string {
 	result, ok := current.(string)
 	require.True(t, ok)
 	return result
+}
+
+func TestParseLiveCallRequestRejectsAmbiguousSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, body := range []string{
+		`{"sdp":"v=0","session":{"model":"a","Model":"b"}}`,
+		`{"sdp":"v=0","session":{"model":"a"},"Session":{"model":"b"}}`,
+	} {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/live", bytes.NewBufferString(body))
+		context.Request.Header.Set("Content-Type", "application/json")
+		_, err := parseLiveCallRequest(context)
+		require.ErrorContains(t, err, "specified more than once", body)
+	}
+}
+
+func TestParseLiveCallRequestRejectsDuplicateMultipartSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	// 浏览器 boundary 含大写字母，校验不能用小写化后的 Content-Type。
+	require.NoError(t, writer.SetBoundary("----WebKitFormBoundaryAbCdEf0123"))
+	require.NoError(t, writer.WriteField("sdp", "v=0"))
+	for range 2 {
+		require.NoError(t, writer.WriteField("session", `{"model":"gpt-realtime"}`))
+	}
+	require.NoError(t, writer.Close())
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/live", &body)
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	_, err := parseLiveCallRequest(context)
+	require.ErrorIs(t, err, requestmodel.ErrDuplicateSessionKey)
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
 	"github.com/stretchr/testify/require"
@@ -2264,4 +2265,44 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingDrainsAfterClientDiscon
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 9, result.Usage.OutputTokens)
 	require.Equal(t, 4, result.Usage.ImageOutputTokens)
+}
+
+func TestParseOpenAIImagesRequestRejectsRepeatedModelAndPreservesMultipleImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, duplicate := range []bool{false, true} {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
+		if duplicate {
+			require.NoError(t, writer.WriteField("model", "gpt-image-1.5"))
+		}
+		require.NoError(t, writer.WriteField("prompt", "draw"))
+		for range 2 {
+			part, err := writer.CreateFormFile("image[]", "a.png")
+			require.NoError(t, err)
+			_, err = part.Write([]byte("fake-image-bytes"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, writer.Close())
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+		parsed, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, body.Bytes())
+		if duplicate {
+			require.ErrorIs(t, err, requestmodel.ErrDuplicateModelKey)
+			continue
+		}
+		require.NoError(t, err)
+		require.Len(t, parsed.Uploads, 2)
+	}
+}
+
+func TestParseOpenAIImagesRequestRejectsDuplicateJSONModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-image-1","prompt":"draw","Model":"gpt-image-1.5"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	_, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, body)
+	require.ErrorIs(t, err, requestmodel.ErrDuplicateModelKey)
 }
