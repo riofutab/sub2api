@@ -750,6 +750,15 @@ func validateHaiku55Request(body []byte) error {
 			return fmt.Errorf("%s thinking.type=disabled does not support thinking.block_binding", modelName)
 		}
 	}
+	// Haiku 5.5 is stricter than Sonnet 5.5: top_p must be exactly 0.99 and
+	// temperature and top_p cannot be sent together.
+	topP := gjson.GetBytes(body, "top_p")
+	if topP.Exists() && gjson.GetBytes(body, "temperature").Exists() {
+		return fmt.Errorf("%s does not allow temperature and top_p together; omit both", modelName)
+	}
+	if topP.Exists() && (topP.Type != gjson.Number || topP.Float() != 0.99) {
+		return fmt.Errorf("%s does not support non-default top_p", modelName)
+	}
 	return validateClaude55DefaultSampling(body, modelName)
 }
 

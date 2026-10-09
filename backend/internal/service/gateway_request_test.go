@@ -64,7 +64,10 @@ func TestValidateHaiku55Request(t *testing.T) {
 		{body: `{"thinking":{"type":"disabled"}}`},
 		{body: `{"tool_choice":{"type":"any"}}`},
 		{body: `{"tool_choice":{"type":"tool","name":"lookup"}}`},
-		{body: `{"temperature":1,"top_p":0.99}`},
+		{body: `{"temperature":1}`},
+		{body: `{"top_p":0.99}`},
+		{body: `{"temperature":1,"top_p":0.99}`, wantErr: "temperature and top_p together"},
+		{body: `{"top_p":1}`, wantErr: "top_p"},
 		{body: `{"thinking":{"type":"enabled","budget_tokens":2048}}`, wantErr: "budget_tokens"},
 		{body: `{"thinking":{"type":"between_tools"}}`, wantErr: "between_tools"},
 		{body: `{"thinking":{"type":"disabled"},"output_config":{"effort":"xhigh"}}`, wantErr: "low, medium or high"},
@@ -84,6 +87,19 @@ func TestValidateHaiku55Request(t *testing.T) {
 			require.ErrorContains(t, err, "claude-haiku-5-5", tc.body)
 		}
 	}
+}
+
+func TestHaiku55OAuthMimicryDoesNotAddTemperatureNextToTopP(t *testing.T) {
+	body := []byte(`{"model":"claude-haiku-5-5","top_p":0.99,"messages":[{"role":"user","content":"hi"}]}`)
+	out, _ := normalizeClaudeOAuthRequestBody(body, "claude-haiku-5-5", claudeOAuthNormalizeOptions{})
+	require.False(t, gjson.GetBytes(out, "temperature").Exists())
+	require.NoError(t, validateClaude55Request(out, "claude-haiku-5-5"))
+
+	// Without top_p the CLI default temperature is still added; temperature=1 alone is accepted.
+	body = []byte(`{"model":"claude-haiku-5-5","messages":[{"role":"user","content":"hi"}]}`)
+	out, _ = normalizeClaudeOAuthRequestBody(body, "claude-haiku-5-5", claudeOAuthNormalizeOptions{})
+	require.Equal(t, float64(1), gjson.GetBytes(out, "temperature").Float())
+	require.NoError(t, validateClaude55Request(out, "claude-haiku-5-5"))
 }
 
 func TestParseGatewayRequest_AnthropicFastSpeed(t *testing.T) {

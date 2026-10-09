@@ -86,6 +86,14 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 				return nil, fmt.Errorf("%s does not support non-default top_p", req.Model)
 			}
 		}
+		if isHaiku55 && req.TopP != nil {
+			if req.Temperature != nil {
+				return nil, fmt.Errorf("%s does not allow temperature and top_p together; omit both", req.Model)
+			}
+			if *req.TopP != 0.99 {
+				return nil, fmt.Errorf("%s does not support non-default top_p", req.Model)
+			}
+		}
 		if req.Reasoning != nil && req.Reasoning.Effort != "" {
 			effort = req.Reasoning.Effort
 		}
