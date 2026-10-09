@@ -533,6 +533,17 @@ func (s *AccountTestService) fetchModelsDevMetadata(
 			continue
 		}
 		entry := upstreamMetadataFromModelsDevModel(modelID, model)
+		if (provider.ID == "minimax-cn" || provider.ID == "minimax") &&
+			entry.Reasoning != nil && *entry.Reasoning && len(entry.SupportedReasoningLevels) == 0 {
+			for _, option := range model.ReasoningOptions {
+				if strings.EqualFold(strings.TrimSpace(option.Type), "toggle") {
+					// MiniMax exposes an on/off thinking switch, not adjustable effort.
+					entry.SupportedReasoningLevels = []string{"none", "high"}
+					entry.DefaultReasoningLevel = "high"
+					break
+				}
+			}
+		}
 		if upstreamModelMetadataIsUseful(entry) {
 			metadata[modelID] = entry
 		}
@@ -636,7 +647,7 @@ func upstreamModelRegistryBaseURL(account *Account) string {
 		return ""
 	}
 	switch {
-	case account.IsOpenAI() || account.IsCNProvider() || account.IsOpenCodeGo():
+	case account.IsOpenAI() || account.IsMultiProtocolAPIKey():
 		return account.GetOpenAIFormatBaseURL()
 	case account.IsGrok():
 		return account.GetGrokBaseURL()
@@ -698,6 +709,10 @@ func matchModelsDevProviderByKnownHost(registry map[string]modelsDevProvider, ac
 		providerID = "openai"
 	case "opencode.ai":
 		providerID = "opencode-go"
+	case "api.minimax.cn", "api.minimaxi.com", "api.minimax.com":
+		providerID = "minimax-cn"
+	case "api.minimax.io":
+		providerID = "minimax"
 	default:
 		return modelsDevProvider{}, false
 	}
@@ -803,9 +818,8 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 		return s.buildAntigravityAPIKeyModelsRequest(ctx, account)
 	case account.IsGrok():
 		return s.buildGrokUpstreamModelsRequest(ctx, account)
-	case account.IsOpenAI() || account.IsCNProvider() || account.IsOpenCodeGo():
-		// 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go
-		// 复用 OpenAI /v1/models 探测。
+	case account.IsOpenAI() || account.IsMultiProtocolAPIKey():
+		// 多协议 API Key 供应商（国产厂商与聚合平台）复用 OpenAI /v1/models 探测。
 		return s.buildOpenAIUpstreamModelsRequest(ctx, account)
 	case account.IsGemini():
 		return s.buildGeminiUpstreamModelsRequest(ctx, account)

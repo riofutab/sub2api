@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/gin-gonic/gin"
@@ -285,18 +287,16 @@ func (s *OpenAIGatewayService) SelectAccountForTokenCount(
 	)
 }
 
-// NormalizeOpenAICompatiblePlatform 保留 grok 与国产 OpenAI 兼容供应商（kimi/zhipu/
-// deepseek）的原值，其他值一律归一为 openai。调度器据此对账号与请求做精确平台匹配：
+// NormalizeOpenAICompatiblePlatform 保留走 OpenAI 网关的平台（openai、grok 与多协议
+// API Key 供应商，见平台清单）的原值，其他值一律归一为 openai。调度器据此对账号与请求做精确平台匹配：
 // kimi 分组请求只命中 kimi 账号，语义与 openai/grok 一致。
 // （upstream 曾将本函数改为未导出 normalizeOpenAICompatiblePlatform，本分支的
 // handler 调度入口仍需导出，保持导出名。）
 func NormalizeOpenAICompatiblePlatform(platform string) string {
-	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
+	if domain.UsesOpenAIGateway(platform) {
 		return platform
-	default:
-		return PlatformOpenAI
 	}
+	return PlatformOpenAI
 }
 
 // noAvailableOpenAISelectionError builds the standard "no account available" error
@@ -538,11 +538,11 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 		now := time.Now()
 		utilization5h, has5h := resolveOpenAIQuotaUtilization(account.Extra, "5h", now)
 		utilization7d, has7d := resolveOpenAIQuotaUtilization(account.Extra, "7d", now)
-		if has5h && utilization5h >= config.Threshold5h {
+		if !config.Disabled5h && has5h && utilization5h >= config.Threshold5h {
 			notifyOpenAIAutoResetFromScheduler(account.ID)
 			return true, openAIQuotaAutoPauseDecision{window: "5h", threshold: config.Threshold5h, utilization: utilization5h, reason: "quota_auto_reset_pending_5h"}
 		}
-		if has7d && utilization7d >= config.Threshold7d {
+		if !config.Disabled7d && has7d && utilization7d >= config.Threshold7d {
 			notifyOpenAIAutoResetFromScheduler(account.ID)
 			return true, openAIQuotaAutoPauseDecision{window: "7d", threshold: config.Threshold7d, utilization: utilization7d, reason: "quota_auto_reset_pending_7d"}
 		}
@@ -550,8 +550,8 @@ func shouldAutoPauseOpenAIAccountByQuota(ctx context.Context, account *Account) 
 		disabled5h := resolveAccountExtraBool(account.Extra, "auto_pause_5h_disabled")
 		disabled7d := resolveAccountExtraBool(account.Extra, "auto_pause_7d_disabled")
 		pause5h, pause7d := resolveOpenAIQuotaAutoPauseThresholds(ctx, account)
-		pauseReached5h := !disabled5h && pause5h > 0 && has5h && utilization5h >= pause5h
-		pauseReached7d := !disabled7d && pause7d > 0 && has7d && utilization7d >= pause7d
+		pauseReached5h := !config.Disabled5h && !disabled5h && pause5h > 0 && has5h && utilization5h >= pause5h
+		pauseReached7d := !config.Disabled7d && !disabled7d && pause7d > 0 && has7d && utilization7d >= pause7d
 		if pauseReached5h || pauseReached7d {
 			state := openAIAutoResetStateFromExtra(account.Extra)
 			if state != nil && state.Status == OpenAIAutoResetStatusAvailable && state.AvailableCount > 0 && !openAIAutoResetStateStale(state, now) {
@@ -1023,8 +1023,56 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 // (only meaningful when the legacy /responses/compact requireCompact flag is
 // true); the third contains deterministic
 // exclusion diagnostics for the evaluated snapshot.
+// preferRoutedAccounts applies a group's per-model account routing
+// (groups.model_routing) to OpenAI-protocol requests. The Anthropic/Gemini
+// gateway honors this routing, but the OpenAI gateway ignored it, so a
+// configured per-model candidate order had no effect on GPT requests.
+//
+// When a matching route exists, only routed accounts are considered; if none of
+// them are in the current candidate pool, the full pool is kept as a fallback
+// (routing is a preference, not a hard restriction). The public alias from
+// context is used when present, because a composite group rewrites the request
+// body to the upstream model name before scheduling.
+func (s *OpenAIGatewayService) preferRoutedAccounts(ctx context.Context, requestedModel string, accounts []Account) []Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	group, ok := ctx.Value(ctxkey.Group).(*Group)
+	if !ok || !IsGroupContextValid(group) || !group.ModelRoutingEnabled || len(group.ModelRouting) == 0 {
+		return accounts
+	}
+	routeModel := strings.TrimSpace(requestedModel)
+	if publicModel, ok := RequestedPublicModelFromContext(ctx); ok && publicModel != "" {
+		routeModel = publicModel
+	}
+	if routeModel == "" {
+		return accounts
+	}
+	routeIDs := group.GetRoutingAccountIDs(routeModel)
+	if len(routeIDs) == 0 {
+		return accounts
+	}
+	allowed := make(map[int64]struct{}, len(routeIDs))
+	for _, id := range routeIDs {
+		if id > 0 {
+			allowed[id] = struct{}{}
+		}
+	}
+	routed := make([]Account, 0, len(accounts))
+	for _, acc := range accounts {
+		if _, ok := allowed[acc.ID]; ok {
+			routed = append(routed, acc)
+		}
+	}
+	if len(routed) == 0 {
+		return accounts
+	}
+	return routed
+}
+
 func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *int64, platform string, accounts []Account, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, bool, openAISelectionFilterStats) {
 	platform = NormalizeOpenAICompatiblePlatform(platform)
+	accounts = s.preferRoutedAccounts(ctx, requestedModel, accounts)
 	compactBlocked := false
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	needsUpstreamCheck := s.needsUpstreamChannelRestrictionCheck(ctx, groupID)
@@ -1192,6 +1240,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	// Honor the group's per-model routing on the load-aware path as well (see
+	// preferRoutedAccounts).
+	accounts = s.preferRoutedAccounts(ctx, requestedModel, accounts)
 
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {

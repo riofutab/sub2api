@@ -92,3 +92,14 @@ func TestOpenAIGatewayHandlerChatCompletions_InvalidServiceTierRejected400(t *te
 		require.Contains(t, rec.Body.String(), "invalid service_tier", "body=%s", body)
 	}
 }
+
+func TestOpenAIGatewayHandlerAlphaSearch_DuplicateModelRejected400(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"gpt-5.4","model":"gpt-5.5","query":"q"}`,
+		`{"model":"gpt-5.4","Model":"gpt-5.5","query":"q"}`,
+	} {
+		rec := runOpenAIHandlerServiceTierTest(t, "/alpha/search", body, (*OpenAIGatewayHandler).AlphaSearch)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", body)
+		require.Contains(t, rec.Body.String(), "model is specified more than once", "body=%s", body)
+	}
+}

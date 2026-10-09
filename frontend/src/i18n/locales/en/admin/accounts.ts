@@ -175,12 +175,15 @@ export default {
         },
         protocolRules: {
           title: 'Model protocol routing',
-          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins; unmatched models use Chat Completions.',
+          hint: 'In adaptive mode, each model is sent to a native upstream protocol. Use an exact ID or a trailing * glob (e.g. grok-*, qwen*). The first matching rule wins. If the inbound protocol is one the model also supports, the request passes through on that protocol without conversion; otherwise the selected protocol is used.',
           patternPlaceholder: 'grok-* or deepseek-v4-flash',
           add: 'Add rule',
           remove: 'Remove rule',
           restoreDefaults: 'Restore defaults',
+          alsoSupports: 'Also supports',
+          alsoSupportsHint: 'Requests arriving on one of these protocols are passed through unchanged, avoiding protocol conversion',
           fallback: 'Unmatched models → Chat Completions (/v1/chat/completions)',
+          catalogFallback: 'Unmatched models → protocols from the upstream model list (supported_endpoints in /models); Chat Completions when unavailable',
         },
         title: 'OpenCode Go usage',
         panelHint: 'Usage windows reported by the upstream OpenCode Go account. Refreshed on demand or automatically when enabled.',
@@ -680,6 +683,8 @@ export default {
         imagesUrlToB64Json: 'Image result URL to base64',
         imagesUrlToB64JsonDesc:
           'Only applies to non-streaming Images responses of OpenAI API Key accounts. When an upstream image item has a url but no b64_json, the gateway downloads the url and fills b64_json with its base64 content (url is kept) for clients built on the official API; the response is returned unchanged if the download fails.',
+        decisionsProtocol: 'Decisions upstream protocol',
+        decisionsProtocolDesc: 'OpenAI uses the native API. OpenRouter supports text and one inline image; configure its Base URL and API key.',
         endpointCapabilities: 'Endpoint capabilities',
         endpointCapabilitiesDesc:
           'Used by account routing. The text endpoint follows the Responses API support setting above and is shown as Responses, Chat Completions, or auto mode; Embeddings independently controls /v1/embeddings.',
@@ -857,7 +862,7 @@ export default {
         'Only applies in pool mode. Use 0 to disable in-place retry. Default {default}, maximum {max}.',
       poolModeRetryStatusCodes: 'Retry Status Codes',
       poolModeRetryStatusCodesHint:
-        'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. Leave blank to use defaults ({default}).',
+        'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. With 503 listed and no proxy on the account, connection failures (refused, unreachable, etc.) are also retried in place as 503 instead of temporarily unscheduling the account for 10 minutes. Leave blank to use defaults ({default}).',
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
@@ -987,9 +992,12 @@ export default {
       autoResetCredit: {
 	    title: 'Automatically use reset credits',
 	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
+	    condition5h: 'Trigger on 5h',
+	    condition7d: 'Trigger on 7d',
+	    conditionRequired: 'Select at least one automatic reset condition.',
 	    threshold5h: '5h auto-reset threshold (%)',
 	    threshold7d: '7d auto-reset threshold (%)',
-	    thresholdHint: 'Each window is evaluated independently. Enter 0.1–100; both default to 100.',
+	    thresholdHint: 'Selected windows are evaluated independently. Enter 0.1–100; both default to 100.',
 	    thresholdInvalid: 'Automatic reset-credit thresholds must be between 0.1% and 100%.'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)

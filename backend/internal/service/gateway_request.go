@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -276,7 +277,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 
 	fields := collectGatewayTopLevelFields(jsonStr)
 	if fields.duplicateModel {
-		return ErrDuplicateModelKey
+		return requestmodel.ErrDuplicateModelKey
 	}
 	if modelResult := fields.model; modelResult.Exists() {
 		if modelResult.Type != gjson.String {
@@ -749,6 +750,15 @@ func validateHaiku55Request(body []byte) error {
 		if gjson.GetBytes(body, "thinking.block_binding").Exists() {
 			return fmt.Errorf("%s thinking.type=disabled does not support thinking.block_binding", modelName)
 		}
+	}
+	// Haiku 5.5 is stricter than Sonnet 5.5: top_p must be exactly 0.99 and
+	// temperature and top_p cannot be sent together.
+	topP := gjson.GetBytes(body, "top_p")
+	if topP.Exists() && gjson.GetBytes(body, "temperature").Exists() {
+		return fmt.Errorf("%s does not allow temperature and top_p together; omit both", modelName)
+	}
+	if topP.Exists() && (topP.Type != gjson.Number || topP.Float() != 0.99) {
+		return fmt.Errorf("%s does not support non-default top_p", modelName)
 	}
 	return validateClaude55DefaultSampling(body, modelName)
 }

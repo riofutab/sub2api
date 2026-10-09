@@ -342,6 +342,71 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).not.toContain('-')
   })
 
+  it('Command Code 账号渲染额度与积分余额单元格', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9103,
+          platform: 'command_code',
+          type: 'apikey',
+          credentials: { api_key: 'user_test_key', account_mode: 'payg' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('-')
+  })
+
+  it('自定义中转的 Command Code 账号没有可查的用量接口，显示占位符', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9105,
+          platform: 'command_code',
+          type: 'apikey',
+          credentials: { api_key: 'user_test_key', account_mode: 'payg', base_url: 'https://relay.example.com/v1' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('div[title="admin.accounts.cnProviders.noBalanceEndpoint"]').exists()).toBe(true)
+  })
+
+  it('Cline 账号渲染 ClinePass 窗口与积分余额单元格', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9104,
+          platform: 'cline',
+          type: 'apikey',
+          credentials: { api_key: 'sk-cline' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
+    // 子单元格可见时不显示 `-` 占位符（按量账号与订阅账号用同一套单元格）。
+    expect(wrapper.text()).not.toContain('-')
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {
@@ -541,6 +606,41 @@ describe('AccountUsageCell', () => {
     // 单一数据源：始终使用 /usage API 返回值，忽略 codex 快照
     expect(wrapper.text()).toContain('5h|18|900')
     expect(wrapper.text()).toContain('7d|36|900')
+  })
+
+  it.each([
+    { platform: 'anthropic', type: 'oauth', id: 7400 },
+    { platform: 'anthropic', type: 'setup-token', id: 7500 },
+    { platform: 'openai', type: 'oauth', id: 7600 }
+  ] as const)('$platform $type uses the same GPT weekly estimate at every positive utilization', async ({ platform, type, id }) => {
+    for (const [index, utilization] of [0.01, 0.5, 40, 120].entries()) {
+      const stats = { requests: 0, tokens: 300, cost: 12, standard_cost: 24, user_cost: 48 }
+      const weekly = { utilization, resets_at: null, remaining_seconds: 0, window_stats: stats }
+      getUsage.mockResolvedValue({
+        five_hour: { ...weekly, utilization: 25 }, seven_day: weekly,
+        seven_day_sonnet: weekly, seven_day_fable: weekly, source: 'passive'
+      })
+      const wrapper = mount(AccountUsageCell, {
+        props: { account: makeAccount({ id: id + index, platform, type }) },
+        global: {
+          stubs: {
+            UsageProgressBar: {
+              props: ['label', 'utilization', 'windowStats', 'estimatedTotalCost'],
+              template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ estimatedTotalCost ?? "none" }}|{{ windowStats?.cost }}</div>'
+            },
+            ClaudeResetCreditsCell: true, OpenAIQuotaResetCell: true, AccountQuotaInfo: true
+          }
+        }
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain(`7d|${utilization}|${1200 / utilization}|12`)
+      expect(wrapper.text()).toContain('5h|25|none')
+      if (platform === 'anthropic') {
+        expect(wrapper.text()).toContain(`7d S|${utilization}|none`)
+        expect(wrapper.text()).toContain(`7d F|${utilization}|none`)
+      }
+      wrapper.unmount()
+    }
   })
 
   it('仅为 OpenAI OAuth 7d 窗口计算预计总费用', async () => {

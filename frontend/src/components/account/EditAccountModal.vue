@@ -53,10 +53,10 @@
             @select="editBaseUrl = $event"
           />
           <CnBaseUrlPresets
-            v-if="isCNApiKeyAccount && account.platform !== 'opencode_go'"
+            v-if="isCNApiKeyAccount && isCNProviderPlatform(account.platform)"
             class="mt-2"
             :platform="cnPresetPlatform"
-            :mode="editAccountMode"
+            :mode="cnPresetMode"
             :protocol="editApiProtocol"
             :current-url="editBaseUrl"
             @select="onCnPresetSelect"
@@ -72,7 +72,7 @@
               <input v-model="editAdaptiveBaseUrls[item.value]" type="text" class="input" />
             </div>
           </div>
-          <p v-if="!cnSupportsNativeResponses(account.platform)" class="input-hint">
+          <p v-if="!cnSupportsNativeResponses(account.platform, currentOpenCodeOrCNMode())" class="input-hint">
             {{ t('admin.accounts.cnProviders.apiProtocol.responsesFallbackDesc') }}
           </p>
         </div>
@@ -128,8 +128,28 @@
             </button>
           </div>
         </div>
+        <!-- Account Mode Selection (providers using the generic form) -->
+        <div v-if="isGenericMultiProtocolAccount && genericAccountModes.length > 1" data-testid="edit-generic-account-mode">
+          <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <button
+              v-for="mode in genericAccountModes"
+              :key="mode"
+              type="button"
+              :class="[
+                'rounded-lg border-2 px-3 py-1.5 text-xs transition-all',
+                editAccountMode === mode
+                  ? 'border-primary-500 bg-primary-50 font-medium text-primary-700 dark:bg-primary-900/30 dark:text-primary-300'
+                  : 'border-gray-200 text-gray-700 hover:border-gray-400 dark:border-dark-600 dark:text-gray-300 dark:hover:border-gray-600'
+              ]"
+              @click="editAccountMode = mode"
+            >
+              {{ providerModeLabel(mode, t) }}
+            </button>
+          </div>
+        </div>
         <!-- Account Mode Selection (CN providers) -->
-        <div v-if="isCNApiKeyAccount && account.platform !== 'opencode_go'">
+        <div v-if="isCNApiKeyAccount && isCNProviderPlatform(account.platform)">
           <label class="input-label">{{ t('admin.accounts.cnProviders.accountMode.title') }}</label>
           <div class="mt-2 flex flex-wrap gap-2">
             <button
@@ -171,9 +191,10 @@
           <p class="input-hint">{{ t(`admin.accounts.cnProviders.apiProtocol.${cnProtocolDescKey}Desc`) }}</p>
         </div>
         <OpenCodeGoProtocolRulesEditor
-          v-if="account.platform === 'opencode_go' && editApiProtocol === 'adaptive'"
+          v-if="isCNApiKeyAccount && providerRoutesByModel(account.platform) && editApiProtocol === 'adaptive'"
           v-model:rows="editOpenCodeGoProtocolRules"
-          :plan="editOpenCodeAccountMode"
+          :platform="account.platform"
+          :plan="currentOpenCodeOrCNMode()"
         />
         <!-- Zhipu 团队版 Coding Plan：组织/项目 ID（可选，填写后用量查询走团队版端点） -->
         <div v-if="account.platform === 'zhipu' && editAccountMode === 'coding'">
@@ -1950,6 +1971,15 @@
         </div>
       </div>
 
+      <div v-if="account?.platform === 'openai' && (account?.type === 'apikey' || account?.type === 'upstream')" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <label class="input-label">{{ t('admin.accounts.openai.decisionsProtocol') }}</label>
+        <select v-model="openAIDecisionsProtocol" data-testid="openai-decisions-protocol" class="input">
+          <option value="openai">OpenAI</option>
+          <option value="openrouter">OpenRouter</option>
+        </select>
+        <p class="input-hint">{{ t('admin.accounts.openai.decisionsProtocolDesc') }}</p>
+      </div>
+
       <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'apikey'"
@@ -2636,6 +2666,10 @@
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
+            <label class="mb-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input v-model="autoResetCredit5hSelected" type="checkbox" :disabled="!autoResetCreditEnabled" data-testid="auto-reset-credit-5h-condition" />
+              {{ t('admin.accounts.autoResetCredit.condition5h') }}
+            </label>
             <label class="input-label">{{ t('admin.accounts.autoResetCredit.threshold5h') }}</label>
             <input
               v-model.number="autoResetCredit5hThreshold"
@@ -2644,11 +2678,15 @@
               max="100"
               step="0.1"
               class="input"
-              :disabled="!autoResetCreditEnabled"
+              :disabled="!autoResetCreditEnabled || !autoResetCredit5hSelected"
               data-testid="auto-reset-credit-5h-threshold"
             />
           </div>
           <div>
+            <label class="mb-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input v-model="autoResetCredit7dSelected" type="checkbox" :disabled="!autoResetCreditEnabled" data-testid="auto-reset-credit-7d-condition" />
+              {{ t('admin.accounts.autoResetCredit.condition7d') }}
+            </label>
             <label class="input-label">{{ t('admin.accounts.autoResetCredit.threshold7d') }}</label>
             <input
               v-model.number="autoResetCredit7dThreshold"
@@ -2657,7 +2695,7 @@
               max="100"
               step="0.1"
               class="input"
-              :disabled="!autoResetCreditEnabled"
+              :disabled="!autoResetCreditEnabled || !autoResetCredit7dSelected"
               data-testid="auto-reset-credit-7d-threshold"
             />
           </div>
@@ -3221,7 +3259,14 @@ import {
   buildPlanTypeOptions,
   cloneOpenCodeGoProtocolRules,
   defaultOpenCodeProtocolRules,
+  defaultProviderProtocolRules,
+  isMultiProtocolApiKeyPlatform,
   parseOpenCodeGoProtocolRules,
+  providerAccountModes,
+  providerModeLabel,
+  providerNativeProtocols,
+  providerRoutesByModel,
+  resolveProviderAccountMode,
   readPlanType,
   resolveOpenCodeAccountMode,
   isCustomGrokBaseUrl,
@@ -3428,11 +3473,18 @@ const editApiKey = ref('')
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
 // account_mode 决定额度/余额监控路径，api_protocol 决定转发端点与格式；
 // 二者均可修正（早期创建的账号可能存错默认值），切换时重置 base_url 预置。
+// 覆盖全部多协议 API Key 供应商（国产厂商、OpenCode 与走通用表单的供应商）。
 const isCNApiKeyAccount = computed(
-  () =>
-    props.account?.type === 'apikey' &&
-    (isCNProviderPlatform(props.account.platform) || props.account.platform === 'opencode_go')
+  () => props.account?.type === 'apikey' && isMultiProtocolApiKeyPlatform(props.account.platform)
 )
+// 前端没有专属界面、走通用表单的多协议供应商：模式 / 协议 / 默认端点来自 profile。
+const isGenericMultiProtocolAccount = computed(
+  () =>
+    isCNApiKeyAccount.value &&
+    !isCNProviderPlatform(props.account?.platform ?? '') &&
+    props.account?.platform !== 'opencode_go'
+)
+const genericAccountModes = computed(() => providerAccountModes(props.account?.platform ?? ''))
 // CnBaseUrlPresets 的 platform prop 是平台字面量联合类型，模板里不能写
 // `as` 断言（其中的 `|` 会被 eslint 误判为 Vue2 filter 语法），经此 computed 传递。
 const cnPresetPlatform = computed<CnProviderPlatform>(() => {
@@ -3442,15 +3494,18 @@ const cnPresetPlatform = computed<CnProviderPlatform>(() => {
   }
   return 'kimi'
 })
-const adaptivePresetPlatform = computed<CnProviderPlatform | 'opencode_go'>(() => {
-  if (props.account?.platform === 'opencode_go') return 'opencode_go'
+const adaptivePresetPlatform = computed<string>(() => {
+  if (isCNApiKeyAccount.value) return props.account!.platform
   return cnPresetPlatform.value
 })
 const editApiProtocol = ref<CnApiProtocol>('adaptive')
 const editOpenCodeGoProtocolRules = ref<OpenCodeGoProtocolRule[]>(cloneOpenCodeGoProtocolRules())
-const editAccountMode = ref<CnAccountMode>('payg')
+// 多协议供应商（国产厂商与走通用表单的供应商）的接入模式；OpenCode 用 editOpenCodeAccountMode。
+const editAccountMode = ref<string>('payg')
 const editOpenCodeAccountMode = ref<OpenCodeAccountMode>('go')
-function currentOpenCodeOrCNMode(): CnAccountMode | OpenCodeAccountMode {
+// 国产厂商的接入模式只有 payg / coding。
+const cnPresetMode = computed<CnAccountMode>(() => (editAccountMode.value === 'coding' ? 'coding' : 'payg'))
+function currentOpenCodeOrCNMode(): string {
   return props.account?.platform === 'opencode_go' ? editOpenCodeAccountMode.value : editAccountMode.value
 }
 // 智谱团队版 Coding Plan：组织/项目 ID，写入 credentials 供额度探测切换团队端点
@@ -3478,25 +3533,22 @@ const cnAccountModeOptions = computed<Array<{ value: CnAccountMode; labelKey: 'p
     ]
   }
 )
-const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => {
-  const opts: Array<{ value: CnApiProtocol; labelKey: string }> = [
-    { value: 'adaptive', labelKey: 'adaptive' },
-    { value: 'chat_completions', labelKey: 'chatCompletions' },
-    { value: 'anthropic', labelKey: 'anthropic' }
-  ]
-  if (cnSupportsNativeResponses(props.account?.platform ?? '')) {
-    opts.push({ value: 'responses', labelKey: 'responses' })
-  }
-  return opts
-})
-const editAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() => {
-  const opts: Array<{ value: CnNativeApiProtocol; labelKey: string }> = [
-    { value: 'chat_completions', labelKey: 'chatCompletions' },
-    { value: 'anthropic', labelKey: 'anthropic' }
-  ]
-  if (cnSupportsNativeResponses(props.account?.platform ?? '')) opts.push({ value: 'responses', labelKey: 'responses' })
-  return opts
-})
+const NATIVE_PROTOCOL_LABEL_KEYS: Record<CnNativeApiProtocol, string> = {
+  chat_completions: 'chatCompletions',
+  anthropic: 'anthropic',
+  responses: 'responses'
+}
+// 当前供应商与接入模式提供原生端点的协议（profile 中有默认基址的协议）。
+const editAdaptiveProtocolOptions = computed<Array<{ value: CnNativeApiProtocol; labelKey: string }>>(() =>
+  providerNativeProtocols(props.account?.platform ?? '', currentOpenCodeOrCNMode()).map(value => ({
+    value,
+    labelKey: NATIVE_PROTOCOL_LABEL_KEYS[value]
+  }))
+)
+const cnProtocolOptions = computed<Array<{ value: CnApiProtocol; labelKey: string }>>(() => [
+  { value: 'adaptive', labelKey: 'adaptive' },
+  ...editAdaptiveProtocolOptions.value
+])
 watch(editApiProtocol, (protocol, previousProtocol) => {
   if (!isCNApiKeyAccount.value || syncingForm.value) return
   if (protocol === 'adaptive') {
@@ -3520,11 +3572,19 @@ watch(editApiProtocol, (protocol, previousProtocol) => {
 watch(editAccountMode, (mode, previousMode) => {
   if (!isCNApiKeyAccount.value || syncingForm.value) return
   if (props.account?.platform === 'opencode_go') return
-  // deepseek 无 coding 套餐：防御性回退（UI 已隐藏该选项）。
-  const effectiveMode = props.account!.platform === 'deepseek' && mode === 'coding' ? 'payg' : mode
+  // 供应商没有的接入模式（如 deepseek 无 coding 套餐）防御性回退默认模式（UI 已隐藏该选项）。
+  const effectiveMode = resolveProviderAccountMode(props.account!.platform, mode)
   if (effectiveMode !== mode) {
     editAccountMode.value = effectiveMode
     return
+  }
+  if (providerRoutesByModel(props.account!.platform)) {
+    const previousRules = JSON.stringify(defaultProviderProtocolRules(props.account!.platform, previousMode))
+    if (JSON.stringify(editOpenCodeGoProtocolRules.value) === previousRules) {
+      editOpenCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(
+        defaultProviderProtocolRules(props.account!.platform, mode)
+      )
+    }
   }
   if (editApiProtocol.value === 'adaptive') {
     const previousDefaults = defaultCNAdaptiveBaseUrls(adaptivePresetPlatform.value, previousMode)
@@ -3688,6 +3748,8 @@ const autoPause7dThreshold = ref<number | null>(null)
 const autoPause5hDisabled = ref(false)
 const autoPause7dDisabled = ref(false)
 const autoResetCreditEnabled = ref(false)
+const autoResetCredit5hSelected = ref(true)
+const autoResetCredit7dSelected = ref(true)
 const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
 const upstreamBillingAutoProbeEnabled = ref(false)
@@ -3764,7 +3826,8 @@ const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
 const openAIImagesUrlToB64JsonEnabled = ref(false)
-const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
+const openAIDecisionsProtocol = ref<'openai' | 'openrouter'>('openai')
+const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings', 'decisions'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
@@ -3926,6 +3989,7 @@ const openAITextEndpointCapabilityLabel = computed(() => {
 const openAIEndpointCapabilityOptions = computed<{ value: OpenAIEndpointCapability; label: string }[]>(() => [
   { value: 'chat_completions', label: openAITextEndpointCapabilityLabel.value },
   { value: 'embeddings', label: t('admin.accounts.openai.capabilityEmbeddings') },
+  { value: 'decisions', label: 'Decisions' },
   { value: 'seedance', label: 'Seedance (Ark)' }
 ])
 const openAITextGenerationCapabilityEnabled = computed(() =>
@@ -3933,9 +3997,9 @@ const openAITextGenerationCapabilityEnabled = computed(() =>
 )
 
 const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
+  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'decisions', 'seedance']
   const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
+  return selected.length > 0 ? selected : ['chat_completions', 'embeddings', 'decisions'] as OpenAIEndpointCapability[]
 }
 
 const readOpenAIEndpointCapabilities = (credentials?: Record<string, unknown>): OpenAIEndpointCapability[] => {
@@ -3943,7 +4007,7 @@ const readOpenAIEndpointCapabilities = (credentials?: Record<string, unknown>): 
   if (Array.isArray(raw)) {
     return normalizeOpenAIEndpointCapabilities(
       raw.filter((value): value is OpenAIEndpointCapability =>
-        value === 'chat_completions' || value === 'embeddings' || value === 'seedance'
+        value === 'chat_completions' || value === 'embeddings' || value === 'decisions' || value === 'seedance'
       )
     )
   }
@@ -3955,7 +4019,7 @@ const readOpenAIEndpointCapabilities = (credentials?: Record<string, unknown>): 
         .filter((value) => capabilityMap[value] === true)
     )
   }
-  return ['chat_completions', 'embeddings']
+  return ['chat_completions', 'embeddings', 'decisions']
 }
 
 const toggleOpenAIEndpointCapability = (capability: OpenAIEndpointCapability, event?: Event) => {
@@ -3980,8 +4044,9 @@ const toggleOpenAIEndpointCapability = (capability: OpenAIEndpointCapability, ev
 }
 
 const applyOpenAIEndpointCapabilities = (credentials: Record<string, unknown>) => {
+  credentials.openai_decisions_protocol = openAIDecisionsProtocol.value
   const capabilities = normalizeOpenAIEndpointCapabilities(openAIEndpointCapabilities.value)
-  if (capabilities.length === 2 && !capabilities.includes('seedance')) {
+  if (capabilities.length === 3 && ['chat_completions', 'embeddings', 'decisions'].every(value => capabilities.includes(value as OpenAIEndpointCapability))) {
     delete credentials.openai_capabilities
     return
   }
@@ -4089,12 +4154,7 @@ const defaultBaseUrl = computed(() => {
   if (props.account?.platform === 'typesafe') return 'https://api.typesafe.ai'
   // CN 供应商：按当前模式/协议回落到官方预设（清空输入框提交时使用），
   // 不能落到 anthropic 默认值（会被当 CC base 拼出错误端点）。
-  if (
-    props.account?.platform === 'kimi' ||
-    props.account?.platform === 'zhipu' ||
-    props.account?.platform === 'deepseek' ||
-    props.account?.platform === 'opencode_go'
-  ) {
+  if (props.account && isMultiProtocolApiKeyPlatform(props.account.platform)) {
     return defaultCNBaseUrl(props.account.platform, currentOpenCodeOrCNMode(), editApiProtocol.value)
   }
   return 'https://api.anthropic.com'
@@ -4256,6 +4316,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
 	autoResetCreditEnabled.value = extra?.auto_reset_credit_enabled === true
+	autoResetCredit5hSelected.value = extra?.auto_reset_credit_5h_disabled !== true
+	autoResetCredit7dSelected.value = extra?.auto_reset_credit_7d_disabled !== true
 	autoResetCredit5hThreshold.value =
 		typeof extra?.auto_reset_credit_5h_threshold === 'number' ? extra.auto_reset_credit_5h_threshold * 100 : 100
 	autoResetCredit7dThreshold.value =
@@ -4271,7 +4333,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
-  openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
+  openAIDecisionsProtocol.value = 'openai'
+  openAIEndpointCapabilities.value = ['chat_completions', 'embeddings', 'decisions']
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
@@ -4282,6 +4345,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
+  if (newAccount.platform === 'openai' && (newAccount.type === 'apikey' || newAccount.type === 'upstream')) {
+    openAIDecisionsProtocol.value = newAccount.credentials?.openai_decisions_protocol === 'openrouter' ? 'openrouter' : 'openai'
+  }
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
@@ -4470,11 +4536,13 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     const credentials = newAccount.credentials as Record<string, unknown>
     // 国产供应商：读取 account_mode 与 api_protocol 作为可编辑初始值
     // （编辑弹窗允许修正两者，用于修复早期存错默认值的账号）。
-    if (isCNProviderPlatform(newAccount.platform) || newAccount.platform === 'opencode_go') {
+    if (isMultiProtocolApiKeyPlatform(newAccount.platform)) {
       if (newAccount.platform === 'opencode_go') {
         editOpenCodeAccountMode.value = resolveOpenCodeAccountMode(credentials.account_mode)
-      } else {
+      } else if (isCNProviderPlatform(newAccount.platform)) {
         editAccountMode.value = credentials.account_mode === 'coding' ? 'coding' : 'payg'
+      } else {
+        editAccountMode.value = resolveProviderAccountMode(newAccount.platform, credentials.account_mode)
       }
       const storedProtocol = credentials.api_protocol
       editApiProtocol.value =
@@ -4484,7 +4552,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         storedProtocol === 'responses'
           ? storedProtocol
           : 'chat_completions'
-      if (!cnSupportsNativeResponses(newAccount.platform) && editApiProtocol.value === 'responses') {
+      if (!cnSupportsNativeResponses(newAccount.platform, currentOpenCodeOrCNMode()) && editApiProtocol.value === 'responses') {
         editApiProtocol.value = 'chat_completions'
       }
       const adaptiveDefaults = defaultCNAdaptiveBaseUrls(newAccount.platform, currentOpenCodeOrCNMode())
@@ -4523,10 +4591,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         editZhipuOrganization.value = typeof credentials.zhipu_organization === 'string' ? credentials.zhipu_organization : ''
         editZhipuProject.value = typeof credentials.zhipu_project === 'string' ? credentials.zhipu_project : ''
       }
-      if (newAccount.platform === 'opencode_go') {
+      if (providerRoutesByModel(newAccount.platform)) {
         editOpenCodeGoProtocolRules.value =
           parseOpenCodeGoProtocolRules(credentials.protocol_rules) ??
-          cloneOpenCodeGoProtocolRules(defaultOpenCodeProtocolRules(editOpenCodeAccountMode.value))
+          cloneOpenCodeGoProtocolRules(defaultProviderProtocolRules(newAccount.platform, currentOpenCodeOrCNMode()))
       }
     }
     const platformDefaultUrl =
@@ -4538,10 +4606,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
             ? 'https://api.x.ai/v1'
             : newAccount.platform === 'typesafe'
               ? 'https://api.typesafe.ai'
-            : newAccount.platform === 'kimi' ||
-                newAccount.platform === 'zhipu' ||
-                newAccount.platform === 'deepseek' ||
-                newAccount.platform === 'opencode_go'
+            : isMultiProtocolApiKeyPlatform(newAccount.platform)
               ? defaultCNBaseUrl(newAccount.platform, currentOpenCodeOrCNMode(), editApiProtocol.value)
               : 'https://api.anthropic.com'
     editBaseUrl.value = isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
@@ -5219,6 +5284,10 @@ const persistGrokMediaEligibility = async (accountID: number, updatedAccount: Ac
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
   try {
+    if (props.account?.platform === 'openai' && (props.account.type === 'apikey' || props.account.type === 'upstream')) {
+      updatePayload.credentials = { ...(updatePayload.credentials ?? props.account.credentials), openai_decisions_protocol: openAIDecisionsProtocol.value }
+    }
+
     let updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     updatedAccount = await persistGrokMediaEligibility(accountID, updatedAccount)
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
@@ -5250,6 +5319,10 @@ const handleSubmit = async () => {
     return
   }
 	if (autoResetCreditEnabled.value) {
+		if (!autoResetCredit5hSelected.value && !autoResetCredit7dSelected.value) {
+			appStore.showError(t('admin.accounts.autoResetCredit.conditionRequired'))
+			return
+		}
 		const thresholds = [autoResetCredit5hThreshold.value, autoResetCredit7dThreshold.value]
 		if (thresholds.some((value) => !Number.isFinite(value) || value < 0.1 || value > 100)) {
 			appStore.showError(t('admin.accounts.autoResetCredit.thresholdInvalid'))
@@ -5307,7 +5380,7 @@ const handleSubmit = async () => {
         } else {
           delete newCredentials.api_base_urls
         }
-        if (props.account.platform === 'opencode_go') {
+        if (providerRoutesByModel(props.account.platform)) {
           applyOpenCodeGoProtocolRules(newCredentials, editOpenCodeGoProtocolRules.value, 'edit')
         }
         // 智谱团队版 Coding Plan：组织/项目 ID 写入凭据（非空才写，清空即移除回落个人版路径）
@@ -5853,6 +5926,8 @@ const handleSubmit = async () => {
 		}
 		if (props.account.type === 'oauth' && !isSparkShadow.value) {
 			newExtra.auto_reset_credit_enabled = autoResetCreditEnabled.value
+			newExtra.auto_reset_credit_5h_disabled = !autoResetCredit5hSelected.value
+			newExtra.auto_reset_credit_7d_disabled = !autoResetCredit7dSelected.value
 			newExtra.auto_reset_credit_5h_threshold = autoResetCredit5hThreshold.value / 100
 			newExtra.auto_reset_credit_7d_threshold = autoResetCredit7dThreshold.value / 100
 		}

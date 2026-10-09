@@ -62,9 +62,13 @@ type CNProviderQuotaProbeResult struct {
 	FetchedAt       int64         `json:"fetched_at"`
 	Persisted       bool          `json:"persisted"`
 	Error           string        `json:"error,omitempty"`
+
+	// Balance 为同一次探测得到的余额（Command Code 积分与窗口同源），其余供应商为空。
+	Balance *CNProviderBalanceResult `json:"balance,omitempty"`
 }
 
-// CNProviderQuotaService 探测 Kimi / Zhipu Coding Plan 的滚动窗口用量。
+// CNProviderQuotaService 探测 Kimi / Zhipu / MiniMax Coding Plan、OpenCode Go、
+// Command Code 与 Cline（ClinePass）的滚动窗口用量。
 type CNProviderQuotaService struct {
 	accountRepo  AccountRepository
 	proxyRepo    ProxyRepository
@@ -131,6 +135,12 @@ func (s *CNProviderQuotaService) QueryUsageForAccount(ctx context.Context, accou
 
 func (s *CNProviderQuotaService) queryUsageForAccount(ctx context.Context, account *Account) (*CNProviderQuotaProbeResult, error) {
 	provider := account.GetCodingPlanProvider()
+	if provider == PlatformCommandCode {
+		return s.queryCommandCodeUsage(ctx, account)
+	}
+	if provider == PlatformCline {
+		return s.queryClineUsage(ctx, account)
+	}
 	if provider != PlatformKimi && provider != PlatformZhipu && provider != PlatformMiniMax && provider != PlatformOpenCodeGo {
 		return nil, infraerrors.New(http.StatusBadRequest, "CN_QUOTA_NOT_CODING_PLAN", "account is not a kimi/zhipu/minimax coding plan or opencode go account")
 	}
@@ -255,6 +265,10 @@ func (s *CNProviderQuotaService) queryUsageForAccount(ctx context.Context, accou
 			return result, nil
 		}
 		tiers = parseMiniMaxUsageTiers(bodyBytes)
+		if len(tiers) == 0 {
+			result.Error = "Invalid MiniMax quota response: no supported usage windows"
+			return result, nil
+		}
 		result.PlanLevel = strings.TrimSpace(gjson.GetBytes(bodyBytes, "current_subscribe_title").String())
 	}
 	result.Tiers = tiers
@@ -288,6 +302,18 @@ func validateCodingPlanAccount(account *Account) error {
 		return infraerrors.New(http.StatusNotFound, "CN_QUOTA_ACCOUNT_NOT_FOUND", "account not found")
 	}
 	if account.IsOpenCodeGoPlan() {
+		return nil
+	}
+	if account.IsCommandCode() {
+		if !account.commandCodeUsageSupported() {
+			return infraerrors.New(http.StatusBadRequest, "CN_QUOTA_NOT_CODING_PLAN", "command code usage is only available for api key accounts on the official host")
+		}
+		return nil
+	}
+	if account.IsCline() {
+		if !account.clineAccountAPISupported() {
+			return infraerrors.New(http.StatusBadRequest, "CN_QUOTA_NOT_CODING_PLAN", "cline usage is only available for api key accounts on the official host")
+		}
 		return nil
 	}
 	if account.IsOpenCodeGo() {
@@ -333,11 +359,12 @@ func kimiQuotaURL(baseURL string) string {
 	return base + "/v1/usages"
 }
 
-// minimaxQuotaURL 根据推理域名选择 Token Plan / Coding Plan 额度主机。
-// 官方 FAQ 写 www.minimax.io / www.minimaxi.com，实际以 Bearer Key 打 api.*。
-// 国际站 api.minimax.io；国内站 api.minimaxi.com（含 api.minimax.com 与自定义回落）。
+// minimaxQuotaURL selects the regional Token Plan endpoint, preserving legacy APIs.
 func minimaxQuotaURL(baseURL string) string {
-	if strings.Contains(strings.ToLower(baseURL), "minimax.io") {
+	if miniMaxAPIHost(baseURL) == "api.minimax.cn" {
+		return "https://www.minimax.cn/v1/token_plan/remains"
+	}
+	if miniMaxAPIHost(baseURL) == "api.minimax.io" {
 		return "https://api.minimax.io/v1/api/openplatform/coding_plan/remains"
 	}
 	return "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains"

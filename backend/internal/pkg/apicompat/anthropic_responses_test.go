@@ -1950,6 +1950,15 @@ func TestHaiku55ResponsesThinkingAndSampling(t *testing.T) {
 	require.ErrorContains(t, err, "top_p")
 	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Reasoning: &ResponsesReasoning{Effort: "minimal"}})
 	require.ErrorContains(t, err, "reasoning effort")
+
+	topP = 1
+	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
+	require.ErrorContains(t, err, "top_p")
+	temperature, topP = 1, 0.99
+	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Temperature: &temperature, TopP: &topP})
+	require.ErrorContains(t, err, "temperature and top_p together")
+	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
+	require.NoError(t, err)
 }
 
 func TestHaiku55SignedThinkingResponsesRoundTrip(t *testing.T) {

@@ -215,6 +215,36 @@ func anthropicStreamEventIsTerminal(eventName, data string) bool {
 	return gjson.Get(trimmed, "type").String() == "message_stop"
 }
 
+// anthropicSSELineIsHeartbeat 判断上游 SSE 行是否为不携带真实数据的心跳流量。
+//
+// 背景：Anthropic 长流会周期性发送心跳（`: ping` 注释、`event: ping`、
+// `data: {"type":"ping"}`）。流式泵曾对读到的每一行刷新 lastReadAt，导致
+// gateway.stream_data_interval_timeout 被纯心跳流无限续命：上游静默十几分钟
+// 也触发不了熔断（issue #7955）。心跳行返回 true，调用方不得用它刷新
+// “数据间隔”计时；其余行（含 [DONE] 与无法识别的行）返回 false，保守起见
+// 仍视为数据，避免误杀行为异常但存活的上游。
+func anthropicSSELineIsHeartbeat(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "event:") {
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")) == "ping"
+	}
+	data, ok := extractAnthropicSSEDataLine(trimmed)
+	if !ok {
+		return false
+	}
+	payload := strings.TrimSpace(data)
+	if payload == "" {
+		return true
+	}
+	if payload == "[DONE]" {
+		return false
+	}
+	return gjson.Get(payload, "type").String() == "ping"
+}
+
 func cloneStringSlice(src []string) []string {
 	if len(src) == 0 {
 		return nil
@@ -445,7 +475,12 @@ var allowedHeaders = map[string]bool{
 	"content-type":                              true,
 	"accept-encoding":                           true,
 	"x-claude-code-session-id":                  true,
-	"x-client-request-id":                       true,
+	// Claude Code 2.1.139+ 在子 agent 请求上带这两个头（主线程不带）。按会话串行的
+	// 上游（如另一个 Claude Code 中转）靠它们把子 agent 拆成独立会话并行执行；
+	// 丢掉后所有子 agent 都会排在主会话后面。
+	"x-claude-code-agent-id":        true,
+	"x-claude-code-parent-agent-id": true,
+	"x-client-request-id":           true,
 }
 
 // ErrStickySessionNotFound is returned by GatewayCache.GetSessionAccountID

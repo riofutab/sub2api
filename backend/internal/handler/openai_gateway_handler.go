@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -330,9 +331,9 @@ func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKe
 
 func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, model string) bool {
 	return compositeTargetPlatformAllowed(c, apiKey, model,
-		service.PlatformOpenAI, service.PlatformGrok,
-		service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
-		service.PlatformMiniMax, service.PlatformOpenCodeGo)
+		domain.PlatformIDsWhere(func(spec domain.PlatformSpec) bool {
+			return spec.Gateway == domain.PlatformGatewayOpenAI
+		})...)
 }
 
 // isResponsesWebSocketCompositePlatform 限定 composite 分组在 Responses WebSocket
@@ -463,7 +464,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
 	// 重复的 model 键会被不同解析器绑定到不同值（gjson 首键 vs encoding/json 末键），在边界直接拒绝。
-	if service.HasDuplicateTopLevelKey(body, "model") {
+	if requestmodel.HasDuplicateTopLevelKey(body, "model") {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is specified more than once")
 		return
 	}
@@ -484,17 +485,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	if normalizedBody, changed := normalizeCodexAutomationBootstrap(body); changed {
-		body = normalizedBody
-		reqLog.Info("openai.codex_automation_bootstrap_normalized",
-			zap.String("normalization", "call_output_to_user_message"),
-		)
+	body, automationChanged, delegationChanged := normalizeCodexBootstrapKinds(body, true, true)
+	if automationChanged {
+		reqLog.Info("openai.codex_automation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
 	}
-	if normalizedBody, changed := normalizeCodexDelegationBootstrap(body); changed {
-		body = normalizedBody
-		reqLog.Info("openai.codex_delegation_bootstrap_normalized",
-			zap.String("normalization", "call_output_to_user_message"),
-		)
+	if delegationChanged {
+		reqLog.Info("openai.codex_delegation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
 	}
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
@@ -1212,7 +1208,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 
 	// 重复的 model 键会被不同解析器绑定到不同值（gjson 首键 vs encoding/json 末键），在边界直接拒绝。
-	if service.HasDuplicateTopLevelKey(body, "model") {
+	if requestmodel.HasDuplicateTopLevelKey(body, "model") {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is specified more than once")
 		return
 	}
@@ -1690,11 +1686,13 @@ func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
 	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
 	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
 	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
-	return normalizeCodexCallOutputBootstrap(body, isCodexDelegationCandidate, true)
+	out, _, changed := normalizeCodexBootstrapKinds(body, false, true)
+	return out, changed
 }
 
 func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
-	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
+	out, changed, _ := normalizeCodexBootstrapKinds(body, true, false)
+	return out, changed
 }
 
 var (
@@ -1704,179 +1702,15 @@ var (
 
 // mayContainCodexBootstrapCandidate 是 bootstrap 归一化的字节预检：候选项的 namespace 必须是
 // codex_app 或 codex_tui。原始字节里既没有这两个标记、也没有被转义的 ASCII 字母时，
-// 解码后不可能出现候选项，可以跳过整体解码。
+// 解码后不可能出现候选项，可以跳过结构扫描。
 func mayContainCodexBootstrapCandidate(body []byte) bool {
 	return bytes.Contains(body, codexAppNamespaceMarker) ||
 		bytes.Contains(body, codexTUINamespaceMarker) ||
 		service.JSONMayContainEscapedLetter(body)
 }
 
-func normalizeCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
-	if !mayContainCodexBootstrapCandidate(body) {
-		return body, false
-	}
-	if !hasUniqueJSONMembers(body) {
-		return body, false
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	var request map[string]any
-	if err := decoder.Decode(&request); err != nil {
-		return body, false
-	}
-	if previousResponseID, exists := request["previous_response_id"]; exists {
-		value, ok := previousResponseID.(string)
-		if !ok || (!allowHistoricalContext && strings.TrimSpace(value) != "") {
-			return body, false
-		}
-	}
-	input, ok := request["input"].([]any)
-	if !ok {
-		return body, false
-	}
-
-	// Responses built-ins follow the *_call / *_call_output naming convention,
-	// so classify by the wire type shape instead of maintaining an incomplete
-	// allowlist. Delegation may coexist with historical anchors only when their
-	// IDs make them unambiguous; automation retains the bootstrap-only boundary.
-	for _, raw := range input {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		typ := stringField(item, "type")
-		if isCandidate(item) {
-			callIDValue, exists := item["call_id"]
-			callID, isString := callIDValue.(string)
-			if exists && (!isString || strings.TrimSpace(callID) != "") {
-				return body, false
-			}
-			continue
-		}
-		if typ == "item_reference" {
-			if allowHistoricalContext && strings.TrimSpace(stringField(item, "id")) != "" {
-				continue
-			}
-			return body, false
-		}
-		if strings.HasSuffix(typ, "_call") || isResponsesCallOutputType(typ) {
-			if allowHistoricalContext && strings.TrimSpace(stringField(item, "call_id")) != "" {
-				continue
-			}
-			return body, false
-		}
-	}
-
-	changed := false
-	for i, raw := range input {
-		item, ok := raw.(map[string]any)
-		if !ok || !isCandidate(item) {
-			continue
-		}
-		output, ok := item["output"].(string)
-		if !ok {
-			continue
-		}
-		input[i] = map[string]any{
-			"type": "message",
-			"role": "user",
-			"content": []any{map[string]any{
-				"type": "input_text",
-				"text": output,
-			}},
-		}
-		changed = true
-	}
-	if !changed {
-		return body, false
-	}
-	normalized, err := json.Marshal(request)
-	if err != nil {
-		return body, false
-	}
-	return normalized, true
-}
-
-func hasUniqueJSONMembers(body []byte) bool {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if !consumeUniqueJSONValue(decoder) {
-		return false
-	}
-	_, err := decoder.Token()
-	return err == io.EOF
-}
-
-func consumeUniqueJSONValue(decoder *json.Decoder) bool {
-	token, err := decoder.Token()
-	if err != nil {
-		return false
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return true
-	}
-
-	switch delim {
-	case '{':
-		members := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return false
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return false
-			}
-			if _, duplicate := members[key]; duplicate {
-				return false
-			}
-			members[key] = struct{}{}
-			if !consumeUniqueJSONValue(decoder) {
-				return false
-			}
-		}
-		end, err := decoder.Token()
-		return err == nil && end == json.Delim('}')
-	case '[':
-		for decoder.More() {
-			if !consumeUniqueJSONValue(decoder) {
-				return false
-			}
-		}
-		end, err := decoder.Token()
-		return err == nil && end == json.Delim(']')
-	default:
-		return false
-	}
-}
-
 func isResponsesCallOutputType(typ string) bool {
 	return strings.HasSuffix(typ, "_call_output") || typ == "tool_search_output"
-}
-
-func isCodexDelegationCandidate(item map[string]any) bool {
-	if stringField(item, "type") != "function_call_output" ||
-		!isCodexDelegationTool(stringField(item, "namespace"), stringField(item, "name")) {
-		return false
-	}
-	output, ok := item["output"].(string)
-	return ok && validCodexDelegationEnvelope(output)
-}
-
-func isCodexAutomationCandidate(item map[string]any) bool {
-	if stringField(item, "type") != "function_call_output" ||
-		stringField(item, "namespace") != "codex_app" ||
-		stringField(item, "name") != "automation_update" {
-		return false
-	}
-	output, ok := item["output"].(string)
-	return ok && (validCodexAutomationBootstrap(output) || validCodexAutomationHeartbeat(output))
-}
-
-func stringField(item map[string]any, key string) string {
-	value, _ := item[key].(string)
-	return value
 }
 
 func isCodexDelegationTool(namespace, name string) bool {

@@ -368,3 +368,25 @@ func TestCompositeLiveRouteDispatchesBySessionModelNotTopLevelAlias(t *testing.T
 
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
+
+func TestDuplicateModelsRejectedBeforeCompositeRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, enabled := range []bool{false, true} {
+		groupID := int64(1)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{GroupID: &groupID, Group: &service.Group{ID: groupID, Platform: service.PlatformComposite, ModelAllowlist: service.GroupModelAllowlist{Enabled: enabled, Models: []string{"alias", "gpt-5.4"}}}})
+		})
+		router.Use(servermiddleware.GroupModelAllowlist())
+		called := false
+		router.Use(func(c *gin.Context) { called = true; c.Next() })
+		router.Use(compositeTargetPlatformMiddleware(service.NewCompositeRouteResolver(compositeRouteRepoStub{routes: []service.CompositeModelRoute{{ID: 1, GroupID: groupID, PublicModel: "alias", UpstreamModel: "gpt-5.4", TargetPlatform: service.PlatformOpenAI, MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointAny, Enabled: true}}})))
+		router.POST("/v1/responses", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"alias","Model":"gpt-5.4"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "allowlist enabled=%v", enabled)
+		require.False(t, called, "must reject before composite routing (allowlist enabled=%v)", enabled)
+	}
+}

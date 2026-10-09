@@ -19,7 +19,8 @@ import (
 // 保证校验发生在合成路由改写与调度之前，且只看客户端书写的公开模型名。
 //
 // 行为：
-//   - 快速路径：未绑定分组或白名单未开启时直接放行，不读请求体。
+//   - 快速路径：未绑定分组时直接放行。白名单未开启时仍读带体请求的请求体，
+//     只做模型载体歧义检查（requestmodel.ValidateBody），不提取候选。
 //   - Responses WebSocket 入口跳过（首帧与后续 turn 由 ResponsesWebSocket 逐帧
 //     校验）；Grok Realtime 的升级请求模型固定在查询参数里，仍走中间件校验，
 //     其他路由伪造 Upgrade 头不得绕过校验。
@@ -27,15 +28,18 @@ import (
 //     model）提取模型；提取不到放行，由 handler 决定是否报「model is required」。
 //   - 带请求体的方法：读体（PrereadBody 回填，下游零拷贝）、提取 JSON
 //     `model`/`session.model` 或 multipart `model`/`session` 后回填请求体。
-//   - 拒绝：按入口协议格式返回 404，并标记运维业务限流原因
+//   - 重复的模型载体（顶层 model，Live 入口的 session / session.model）返回
+//     400 invalid_request_error，在合成路由改写与调度之前拒绝。
+//   - 白名单拒绝：按入口协议格式返回 404，并标记运维业务限流原因
 //     local_model_configuration 与 ingress 拒绝原因 model_not_allowed。
 func GroupModelAllowlist() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey, ok := GetAPIKeyFromContext(c)
-		if !ok || apiKey == nil || apiKey.Group == nil || !apiKey.Group.ModelAllowlistEnabled() {
+		if !ok || apiKey == nil || apiKey.Group == nil {
 			c.Next()
 			return
 		}
+		allowlistEnabled := apiKey.Group.ModelAllowlistEnabled()
 		allowlist := apiKey.Group.ModelAllowlist
 		if c.Request == nil {
 			c.Next()
@@ -55,7 +59,7 @@ func GroupModelAllowlist() gin.HandlerFunc {
 		} else {
 			switch c.Request.Method {
 			case http.MethodPost, http.MethodPut, http.MethodPatch:
-				candidates, done := groupModelAllowlistModelsFromBody(c)
+				candidates, done := groupModelAllowlistModelsFromBody(c, allowlistEnabled)
 				if !done {
 					// 请求体读取失败（如超限 413）已写出响应。
 					return
@@ -70,6 +74,10 @@ func GroupModelAllowlist() gin.HandlerFunc {
 			}
 		}
 
+		if !allowlistEnabled {
+			c.Next()
+			return
+		}
 		blocked := ""
 		for _, candidate := range models {
 			if !allowlist.Allows(candidate) {
@@ -103,14 +111,14 @@ func isResponsesWebSocketRoute(c *gin.Context) bool {
 	return false
 }
 
-// groupModelAllowlistModelsFromBody 读取请求体并提取客户端模型名，随后把请求体
-// 回填（PrereadBody），保证后续 handler 零拷贝重读。读取失败按现有合成中间件
-// 的方式返回 400/413（返回 false 表示已写出响应并 Abort）。
+// groupModelAllowlistModelsFromBody 读取请求体、拒绝有歧义的模型载体，白名单开启时
+// 再提取客户端模型名，随后把请求体回填（PrereadBody），保证后续 handler 零拷贝重读。
+// 读取失败按现有合成中间件的方式返回 400/413（返回 false 表示已写出响应并 Abort）。
 //
 // 下游同时存在 gjson（首个、大小写敏感）、encoding/json 绑定（末值、大小写
 // 不敏感）与 multipart 表单（首/末字段）三类解析器，这里返回「任一解析器可能
 // 绑定到的全部模型值」，调用方必须逐一校验，任一未命中即拒绝。
-func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
+func groupModelAllowlistModelsFromBody(c *gin.Context, collect bool) ([]string, bool) {
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -125,7 +133,33 @@ func groupModelAllowlistModelsFromBody(c *gin.Context) ([]string, bool) {
 		return nil, false
 	}
 	requestmodel.ResetRequestBody(c.Request, body)
-	return requestmodel.FromBodyCandidates(c.FullPath(), c.GetHeader("Content-Type"), body), true
+	contentType := c.GetHeader("Content-Type")
+	if err := requestmodel.ValidateBody(c.FullPath(), contentType, body); err != nil {
+		writeAmbiguousModelError(c, err.Error())
+		return nil, false
+	}
+	if !collect {
+		return nil, true
+	}
+	return requestmodel.FromBodyCandidates(c.FullPath(), contentType, body), true
+}
+
+// writeAmbiguousModelError 按入口协议输出 400 invalid_request_error 并 Abort。
+func writeAmbiguousModelError(c *gin.Context, message string) {
+	path := ""
+	if c.Request != nil && c.Request.URL != nil {
+		path = c.Request.URL.Path
+	}
+	errorBody := gin.H{"type": "invalid_request_error", "message": message}
+	switch {
+	case strings.HasPrefix(path, "/v1beta") || strings.HasPrefix(path, "/antigravity/v1beta"):
+		GoogleErrorWriter(c, http.StatusBadRequest, message)
+	case strings.Contains(path, "/messages"):
+		c.JSON(http.StatusBadRequest, gin.H{"type": "error", "error": errorBody})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": errorBody})
+	}
+	c.Abort()
 }
 
 // groupModelAllowlistModelFromParams 从路由参数提取模型名：Gemini 原生 URL 的

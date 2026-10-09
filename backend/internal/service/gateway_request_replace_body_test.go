@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -53,8 +54,8 @@ func referenceParseGatewayRequest(body []byte, protocol string) (parsedRequestSn
 	if !gjson.ValidBytes(body) {
 		return snap, DescribeInvalidJSON(body)
 	}
-	if HasDuplicateTopLevelKey(body, "model") {
-		return snap, ErrDuplicateModelKey
+	if requestmodel.HasDuplicateTopLevelKey(body, "model") {
+		return snap, requestmodel.ErrDuplicateModelKey
 	}
 	jsonStr := string(body)
 	if modelResult := gjson.Get(jsonStr, "model"); modelResult.Exists() {

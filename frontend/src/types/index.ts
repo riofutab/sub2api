@@ -540,7 +540,11 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'composite'
+/**
+ * 分组平台：具体平台或 composite。具体平台以平台清单（constants/platformCatalog）
+ * 为准，后端新登记的平台是 KnownAccountPlatform 之外的字符串。
+ */
+export type GroupPlatform = AccountPlatform | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -562,6 +566,16 @@ export interface ReasoningEffortMapping {
   model?: string
 }
 
+/** 分组名称与描述在某个语言下的译文；字段为空表示沿用分组自身的 name/description。 */
+export interface GroupLocaleText {
+  name?: string
+  description?: string
+}
+
+/** 以语言代码（en、zh…）为键的分组文案译文。 */
+export type GroupI18n = Record<string, GroupLocaleText>
+
+// 用户侧接口返回的 name / description 已由后端按请求语言（Accept-Language）选好
 export interface Group {
   id: number
   name: string
@@ -625,6 +639,8 @@ export interface Group {
 }
 
 export interface AdminGroup extends Group {
+  // 管理端的 name / description 始终是原字段，各语言译文另放在 i18n 里
+  i18n?: GroupI18n
   force_openai_fast: boolean
   free_openai_fast: boolean
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
@@ -791,6 +807,7 @@ export interface UpdateApiKeyRequest {
 export interface CreateGroupRequest {
   name: string
   description?: string | null
+  i18n?: GroupI18n
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
@@ -856,6 +873,7 @@ export interface CreateGroupRequest {
 export interface UpdateGroupRequest {
   name?: string
   description?: string | null
+  i18n?: GroupI18n
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
@@ -920,7 +938,13 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe'
+/** 前端内置专属界面（图标、配色、表单等）的平台。 */
+export type KnownAccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'typesafe' | 'command_code' | 'cline'
+/**
+ * 账号平台：内置平台，或后端平台清单中新登记的平台（任意字符串）。
+ * `string & {}` 保留内置平台的字面量补全。
+ */
+export type AccountPlatform = KnownAccountPlatform | (string & {})
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1238,6 +1262,8 @@ export interface Account {
     }
     codex_referral_snapshot?: import('./openaiReferrals').OpenAIReferralEligibility | null
     auto_reset_credit_enabled?: boolean
+    auto_reset_credit_5h_disabled?: boolean
+    auto_reset_credit_7d_disabled?: boolean
     auto_reset_credit_5h_threshold?: number
     auto_reset_credit_7d_threshold?: number
     codex_auto_reset_credit_state?: {
@@ -1513,7 +1539,7 @@ export interface CodexUsageSnapshot {
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
-export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'seedance'
+export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'decisions' | 'seedance'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode

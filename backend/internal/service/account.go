@@ -94,6 +94,12 @@ const (
 	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
 	OpenAIEndpointCapabilityAlphaSearch     OpenAIEndpointCapability = "alpha_search"
 	OpenAIEndpointCapabilityLive            OpenAIEndpointCapability = "live"
+	// OpenAIEndpointCapabilityDecisions serves the OpenAI Decisions contract.
+	// It is available only to API-key/upstream credentials; ChatGPT OAuth/Codex
+	// accounts use a different upstream protocol and must not be selected here.
+	OpenAIEndpointCapabilityDecisions OpenAIEndpointCapability = "decisions"
+	// DecisionsMultiImage is an internal scheduling requirement, not a stored capability.
+	OpenAIEndpointCapabilityDecisionsMultiImage OpenAIEndpointCapability = "decisions_multi_image"
 	// OpenAIEndpointCapabilityGrokMediaGeneration keeps image/video generation
 	// away from Grok accounts that are explicitly disabled or whose billing
 	// entitlement probe was forbidden. Video status lookups intentionally do not
@@ -312,7 +318,7 @@ func (a *Account) IsCNProvider() bool {
 // openai/grok 原生走 OpenAI 网关；国产供应商同为 OpenAI Chat Completions
 // 兼容上游，也经 OpenAI 网关转发。OpenCode 同样经 OpenAI 网关按模型分流。
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.IsCNProvider() || a.IsOpenCodeGo())
+	return a != nil && domain.UsesOpenAIGateway(a.Platform)
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -1419,7 +1425,7 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go；
 // grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() && !a.IsCNProvider() && !a.IsOpenCodeGo() {
+	if !a.IsOpenAI() && !a.IsMultiProtocolAPIKey() {
 		return ""
 	}
 	if a.IsMultiProtocolAPIKey() && a.IsAdaptiveAPIProtocol() {
@@ -1434,27 +1440,11 @@ func (a *Account) GetOpenAIBaseURL() string {
 			return baseURL
 		}
 	}
-	// 平台默认 base_url：CN 供应商按 account_mode 选择 payg / coding 默认值。
-	switch a.Platform {
-	case PlatformKimi:
-		if a.GetAccountMode() == AccountModeCoding {
-			return DefaultKimiCodingBaseURL
-		}
-		return DefaultKimiPayGBaseURL
-	case PlatformZhipu:
-		if a.GetAccountMode() == AccountModeCoding {
-			return DefaultZhipuCodingBaseURL
-		}
-		return DefaultZhipuPayGBaseURL
-	case PlatformDeepseek:
-		return DefaultDeepseekBaseURL
-	case PlatformMiniMax:
-		return DefaultMiniMaxBaseURL
-	case PlatformOpenCodeGo:
-		return a.openCodeDefaultChatBaseURL()
-	default:
-		return "https://api.openai.com"
+	// 平台默认 base_url：多协议供应商按 account_mode 查 provider profile。
+	if baseURL := a.defaultProviderBaseURL(APIProtocolChatCompletions); baseURL != "" {
+		return baseURL
 	}
+	return "https://api.openai.com"
 }
 
 // GetAccountMode 返回国产供应商账号的接入模式（payg / coding）；非国产供应商或未设置时
@@ -1495,7 +1485,8 @@ func (a *Account) GetAPIProtocol() string {
 	case APIProtocolChatCompletions:
 		return APIProtocolChatCompletions
 	}
-	if a.IsOpenCodeGo() {
+	// 按模型分流的供应商（多模型聚合平台）未显式配置时默认 adaptive。
+	if a.routesByModel() {
 		return APIProtocolAdaptive
 	}
 	return APIProtocolChatCompletions
@@ -1505,15 +1496,7 @@ func (a *Account) GetAPIProtocol() string {
 // DeepSeek 官方为 /responses（无 /v1）；Kimi 按量付费与 Coding Plan 均为
 // /v1/responses（moonshot.cn / kimi.com/coding）；MiniMax 为 /v1/responses。
 func (a *Account) SupportsNativeCNResponses() bool {
-	if a == nil {
-		return false
-	}
-	switch a.Platform {
-	case PlatformDeepseek, PlatformKimi, PlatformMiniMax, PlatformOpenCodeGo:
-		return true
-	default:
-		return false
-	}
+	return a.providerSupportsProtocol(APIProtocolResponses)
 }
 
 // UsesNativeCNResponses 报告当前账号是否应按原生 Responses 协议转发
@@ -1554,48 +1537,7 @@ func (a *Account) GetCNProtocolBaseURL(protocol string) string {
 			}
 		}
 	}
-	return a.defaultCNProtocolBaseURL(protocol)
-}
-
-func (a *Account) defaultCNProtocolBaseURL(protocol string) string {
-	switch protocol {
-	case APIProtocolAnthropic:
-		switch a.Platform {
-		case PlatformKimi:
-			if a.GetAccountMode() == AccountModeCoding {
-				return DefaultKimiCodingAnthropicBaseURL
-			}
-			return DefaultKimiPayGAnthropicBaseURL
-		case PlatformZhipu:
-			return DefaultZhipuAnthropicBaseURL
-		case PlatformDeepseek:
-			return DefaultDeepseekAnthropicBaseURL
-		case PlatformMiniMax:
-			return DefaultMiniMaxAnthropicBaseURL
-		case PlatformOpenCodeGo:
-			return a.openCodeDefaultAnthropicBaseURL()
-		}
-	case APIProtocolChatCompletions, APIProtocolResponses:
-		switch a.Platform {
-		case PlatformKimi:
-			if a.GetAccountMode() == AccountModeCoding {
-				return DefaultKimiCodingBaseURL
-			}
-			return DefaultKimiPayGBaseURL
-		case PlatformZhipu:
-			if a.GetAccountMode() == AccountModeCoding {
-				return DefaultZhipuCodingBaseURL
-			}
-			return DefaultZhipuPayGBaseURL
-		case PlatformDeepseek:
-			return DefaultDeepseekBaseURL
-		case PlatformMiniMax:
-			return DefaultMiniMaxBaseURL
-		case PlatformOpenCodeGo:
-			return a.openCodeDefaultChatBaseURL()
-		}
-	}
-	return ""
+	return a.defaultProviderBaseURL(protocol)
 }
 
 // IsAnthropicProtocol 报告账号是否以原生 Anthropic 协议接入上游
@@ -1619,23 +1561,7 @@ func (a *Account) GetAnthropicProtocolBaseURL() string {
 			return baseURL
 		}
 	}
-	switch a.Platform {
-	case PlatformKimi:
-		if a.GetAccountMode() == AccountModeCoding {
-			return DefaultKimiCodingAnthropicBaseURL
-		}
-		return DefaultKimiPayGAnthropicBaseURL
-	case PlatformZhipu:
-		return DefaultZhipuAnthropicBaseURL
-	case PlatformDeepseek:
-		return DefaultDeepseekAnthropicBaseURL
-	case PlatformMiniMax:
-		return DefaultMiniMaxAnthropicBaseURL
-	case PlatformOpenCodeGo:
-		return a.openCodeDefaultAnthropicBaseURL()
-	default:
-		return ""
-	}
+	return a.defaultProviderBaseURL(APIProtocolAnthropic)
 }
 
 // GetOpenAIFormatBaseURL 返回供 OpenAI 格式端点（/v1/models、/v1/chat/completions
@@ -1647,26 +1573,19 @@ func (a *Account) GetOpenAIFormatBaseURL() string {
 	if a == nil || !a.IsAnthropicProtocol() {
 		return a.GetOpenAIBaseURL()
 	}
-	switch a.Platform {
-	case PlatformKimi:
-		if a.GetAccountMode() == AccountModeCoding {
-			return DefaultKimiCodingBaseURL
+	// MiniMax 国内站账号的官方 base_url 指向 api.minimax.cn 等主机，换成同主机的 /v1。
+	if a.Platform == PlatformMiniMax {
+		if baseURL := a.GetCredential("base_url"); miniMaxAPIHost(baseURL) != "" {
+			u, _ := url.Parse(strings.TrimSpace(baseURL))
+			u.Path = "/v1"
+			u.RawPath = ""
+			return u.String()
 		}
-		return DefaultKimiPayGBaseURL
-	case PlatformZhipu:
-		if a.GetAccountMode() == AccountModeCoding {
-			return DefaultZhipuCodingBaseURL
-		}
-		return DefaultZhipuPayGBaseURL
-	case PlatformDeepseek:
-		return DefaultDeepseekBaseURL
-	case PlatformMiniMax:
-		return DefaultMiniMaxBaseURL
-	case PlatformOpenCodeGo:
-		return a.openCodeDefaultChatBaseURL()
-	default:
-		return a.GetOpenAIBaseURL()
 	}
+	if baseURL := a.defaultProviderBaseURL(APIProtocolChatCompletions); baseURL != "" {
+		return baseURL
+	}
+	return a.GetOpenAIBaseURL()
 }
 
 // GetCNAPIKey 返回国产 OpenAI 兼容供应商账号的 api_key 凭据（kimi/zhipu/deepseek）。
@@ -1678,7 +1597,8 @@ func (a *Account) GetCNAPIKey() string {
 	return a.GetCredential("api_key")
 }
 
-// GetCodingPlanProvider 根据 base_url 识别 Coding Plan 供应商（kimi / zhipu / minimax），
+// GetCodingPlanProvider 根据 base_url 识别 Coding Plan 供应商（kimi / zhipu / minimax；
+// OpenCode Go 订阅与官方主机上的 Command Code、Cline 账号按平台识别），
 // 用于路由到对应的额度查询端点。非 coding 模式或无法识别时返回空串。
 // 只认官方域名：自定义中转不得把第三方 Key 发往厂商官方额度端点。
 func (a *Account) GetCodingPlanProvider() string {
@@ -1687,6 +1607,18 @@ func (a *Account) GetCodingPlanProvider() string {
 	}
 	if a.IsOpenCodeGoPlan() {
 		return PlatformOpenCodeGo
+	}
+	if a.IsCommandCode() {
+		if a.commandCodeUsageSupported() {
+			return PlatformCommandCode
+		}
+		return ""
+	}
+	if a.IsCline() {
+		if a.clineAccountAPISupported() {
+			return PlatformCline
+		}
+		return ""
 	}
 	if a.GetAccountMode() != AccountModeCoding {
 		return ""
@@ -1697,10 +1629,23 @@ func (a *Account) GetCodingPlanProvider() string {
 		return PlatformKimi
 	case strings.Contains(baseURL, "bigmodel.cn"), strings.Contains(baseURL, "api.z.ai"):
 		return PlatformZhipu
-	case strings.Contains(baseURL, "minimax.io"),
-		strings.Contains(baseURL, "minimaxi.com"),
-		strings.Contains(baseURL, "minimax.com"):
+	case miniMaxAPIHost(baseURL) != "":
 		return PlatformMiniMax
+	default:
+		return ""
+	}
+}
+
+// Only official API hosts may send subscription keys to MiniMax quota endpoints.
+func miniMaxAPIHost(baseURL string) string {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	switch host {
+	case "api.minimax.cn", "api.minimaxi.com", "api.minimax.com", "api.minimax.io":
+		return host
 	default:
 		return ""
 	}
@@ -1922,6 +1867,17 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityDecisions, OpenAIEndpointCapabilityDecisionsMultiImage:
+		if a.Platform != PlatformOpenAI || (a.Type != AccountTypeAPIKey && a.Type != AccountTypeUpstream) {
+			return false
+		}
+		if capability == OpenAIEndpointCapabilityDecisionsMultiImage && a.GetOpenAIDecisionsProtocol() != "openai" {
+			return false
+		}
+		if a.GetOpenAIDecisionsProtocol() != "openai" && a.GetOpenAIDecisionsProtocol() != "openrouter" {
+			return false
+		}
+		capability = OpenAIEndpointCapabilityDecisions
 	case OpenAIEndpointCapabilityLive:
 		return a.Platform == PlatformOpenAI &&
 			a.Type == AccountTypeOAuth &&

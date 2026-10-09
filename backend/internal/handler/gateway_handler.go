@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -165,7 +166,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	if err != nil {
 		// 重复的 model 键会被不同解析器绑定到不同值（gjson 首键 vs encoding/json 末键），在边界直接拒绝。
 		// 检测复用 ParseGatewayRequest 的顶层遍历，不额外扫描请求体。
-		if errors.Is(err, service.ErrDuplicateModelKey) {
+		if errors.Is(err, requestmodel.ErrDuplicateModelKey) {
 			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
@@ -1370,7 +1371,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
-	for _, platform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo, service.PlatformTypeSafe} {
+	for _, platform := range domain.CompositePrecedencePlatformIDs() {
 		if platform == service.PlatformTypeSafe && !includeSystemOne {
 			continue
 		}
@@ -1572,10 +1573,13 @@ func defaultModelIDsForPlatform(platform string) []string {
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		// TypeSafe is deliberately absent: jev-latest only works through
-		// /v1/systemone, so the static fallback never advertises it to LLM
-		// clients. compositeAvailableModels lists it when the group can serve it.
-		for _, concretePlatform := range []string{service.PlatformAnthropic, service.PlatformGemini, service.PlatformOpenAI, service.PlatformAntigravity, service.PlatformGrok, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo} {
+		for _, concretePlatform := range domain.CompositePrecedencePlatformIDs() {
+			// TypeSafe is deliberately skipped: jev-latest only works through
+			// /v1/systemone, so the static fallback never advertises it to LLM
+			// clients. compositeAvailableModels lists it when the group can serve it.
+			if concretePlatform == service.PlatformTypeSafe {
+				continue
+			}
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue
@@ -1870,6 +1874,11 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		// 订阅信息可能不在 context 中（/v1/usage 路径跳过了中间件的计费检查）
 		subscription, ok := middleware2.GetSubscriptionFromContext(c)
 		if ok {
+			// Report what billing would enforce right now: windows that expired with
+			// no charge since are still stale in storage (the reset is lazy), so
+			// advance them in memory before reading usage and reset times.
+			subscription = subscription.WithUsageWindowsAdvancedAt(time.Now())
+			dailyResetAt, weeklyResetAt, monthlyResetAt := subscription.UsageWindowResetTimes()
 			remaining := h.calculateSubscriptionRemaining(apiKey.Group, subscription)
 			resp["remaining"] = remaining
 			resp["subscription"] = gin.H{
@@ -1879,6 +1888,9 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 				"daily_limit_usd":     apiKey.Group.DailyLimitUSD,
 				"weekly_limit_usd":    apiKey.Group.WeeklyLimitUSD,
 				"monthly_limit_usd":   apiKey.Group.MonthlyLimitUSD,
+				"daily_reset_at":      subscriptionResetAtIfLimited(apiKey.Group.HasDailyLimit(), dailyResetAt),
+				"weekly_reset_at":     subscriptionResetAtIfLimited(apiKey.Group.HasWeeklyLimit(), weeklyResetAt),
+				"monthly_reset_at":    subscriptionResetAtIfLimited(apiKey.Group.HasMonthlyLimit(), monthlyResetAt),
 				"weekly_window_start": subscription.WeeklyWindowStart,
 				"expires_at":          subscription.ExpiresAt,
 			}
@@ -1922,6 +1934,15 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 		resp["model_stats"] = modelStats
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// subscriptionResetAtIfLimited reports a window's reset time only when that
+// window has a configured limit; an unlimited window has nothing to reset.
+func subscriptionResetAtIfLimited(limited bool, resetAt *time.Time) *time.Time {
+	if !limited {
+		return nil
+	}
+	return resetAt
 }
 
 // calculateSubscriptionRemaining 计算订阅剩余可用额度

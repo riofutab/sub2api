@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
+import {
+  BUILTIN_PLATFORM_CATALOG,
+  resetPlatformCatalog,
+  setPlatformCatalog
+} from '@/constants/platformCatalog'
 
 const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
@@ -325,6 +330,26 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 }
 
 describe('EditAccountModal', () => {
+  it('preserves the protocol when editing an OpenAI upstream account', async () => {
+    const account = { ...buildAccount(), type: 'upstream', credentials: { base_url: 'https://openrouter.ai/api/v1', openai_decisions_protocol: 'openrouter' } } as any
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="openai-decisions-protocol"]').element.value).toBe('openrouter')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls.at(-1)?.[1]?.credentials?.openai_decisions_protocol).toBe('openrouter')
+  })
+  it('loads and saves the explicit OpenRouter Decisions protocol', async () => {
+    const account = buildAccount()
+    account.credentials.openai_decisions_protocol = 'openrouter'
+    updateAccountMock.mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="openai-decisions-protocol"]').element.value).toBe('openrouter')
+    await wrapper.get('[data-testid="openai-decisions-protocol"]').setValue('openai')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls.at(-1)?.[1]?.credentials?.openai_decisions_protocol).toBe('openai')
+  })
+
   beforeEach(() => {
     authIsSimpleMode.value = true
   })
@@ -565,6 +590,104 @@ describe('EditAccountModal', () => {
       account_mode: 'go',
       api_protocol: 'adaptive',
       base_url: 'https://opencode.ai/zen/go/v1'
+    })
+  })
+
+  describe('providers using the generic form', () => {
+    beforeEach(() => {
+      setPlatformCatalog({
+        platforms: [
+          ...BUILTIN_PLATFORM_CATALOG.platforms,
+          {
+            id: 'acme_router',
+            display_name: 'Acme Router',
+            gateway: 'openai',
+            cn_provider: false,
+            multi_protocol: {
+              default_mode: 'standard',
+              routing: 'by_model',
+              modes: [
+                {
+                  mode: 'standard',
+                  base_urls: {
+                    chat_completions: 'https://api.acme-router.example/provider/v1',
+                    anthropic: 'https://api.acme-router.example/provider'
+                  },
+                  protocol_rules: [{ pattern: 'claude-*', protocol: 'anthropic' }]
+                },
+                {
+                  mode: 'team',
+                  base_urls: {
+                    chat_completions: 'https://team.acme-router.example/provider/v1',
+                    anthropic: 'https://team.acme-router.example/provider'
+                  },
+                  protocol_rules: [{ pattern: 'sonnet-*', protocol: 'anthropic' }]
+                }
+              ]
+            }
+          }
+        ],
+        composite_precedence: [...BUILTIN_PLATFORM_CATALOG.composite_precedence, 'acme_router']
+      })
+      checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    })
+
+    afterEach(() => {
+      resetPlatformCatalog()
+    })
+
+    function commandCodeAccount() {
+      const account = buildAccount()
+      account.platform = 'acme_router'
+      account.credentials = {
+        api_key: 'sk-cc',
+        account_mode: 'standard',
+        api_protocol: 'adaptive',
+        base_url: 'https://relay.example.com/v1',
+        api_base_urls: {
+          chat_completions: 'https://relay.example.com/v1',
+          anthropic: 'https://relay.example.com'
+        },
+        protocol_rules: [{ pattern: 'custom-*', protocol: 'anthropic' }]
+      }
+      updateAccountMock.mockReset().mockResolvedValue(account)
+      return account
+    }
+
+    it('preserves stored endpoints and rules on submit', async () => {
+      const wrapper = mountModal(commandCodeAccount())
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+        account_mode: 'standard',
+        api_protocol: 'adaptive',
+        base_url: 'https://relay.example.com/v1',
+        api_base_urls: {
+          chat_completions: 'https://relay.example.com/v1',
+          anthropic: 'https://relay.example.com'
+        },
+        protocol_rules: [{ pattern: 'custom-*', protocol: 'anthropic' }]
+      })
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.api_base_urls).not.toHaveProperty('responses')
+    })
+
+    it('offers the provider modes and keeps customised endpoints when switching mode', async () => {
+      const wrapper = mountModal(commandCodeAccount())
+      const modeButtons = wrapper.get('[data-testid="edit-generic-account-mode"]').findAll('button')
+      expect(modeButtons.map(button => button.text())).toEqual(['standard', 'team'])
+      await modeButtons[1].trigger('click')
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+      expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+        account_mode: 'team',
+        // 自定义端点与规则不是上一模式的默认值，切换模式时保留。
+        api_base_urls: {
+          chat_completions: 'https://relay.example.com/v1',
+          anthropic: 'https://relay.example.com'
+        },
+        protocol_rules: [{ pattern: 'custom-*', protocol: 'anthropic' }]
+      })
     })
   })
 
@@ -1459,6 +1582,7 @@ describe('EditAccountModal', () => {
     expect(chatCheckbox.element.checked).toBe(true)
     expect(embeddingsCheckbox.element.checked).toBe(true)
 
+    await wrapper.get('[data-testid="openai-endpoint-capability-decisions"]').setValue(false)
     await embeddingsCheckbox.setValue(false)
 
     expect(chatCheckbox.element.checked).toBe(true)
@@ -1781,6 +1905,8 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     expect(parent.find('[data-testid="auto-reset-credit-settings"]').exists()).toBe(true)
     expect((parent.get('[data-testid="auto-reset-credit-5h-threshold"]').element as HTMLInputElement).value).toBe('100')
     expect((parent.get('[data-testid="auto-reset-credit-7d-threshold"]').element as HTMLInputElement).value).toBe('100')
+    expect((parent.get('[data-testid="auto-reset-credit-5h-condition"]').element as HTMLInputElement).checked).toBe(true)
+    expect((parent.get('[data-testid="auto-reset-credit-7d-condition"]').element as HTMLInputElement).checked).toBe(true)
     expect(parent.get('[data-testid="auto-reset-credit-5h-threshold"]').attributes('disabled')).toBeDefined()
     parent.unmount()
 
@@ -1812,10 +1938,40 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
     expect(extra).toMatchObject({
       auto_reset_credit_enabled: true,
+      auto_reset_credit_5h_disabled: false,
+      auto_reset_credit_7d_disabled: false,
       auto_reset_credit_5h_threshold: 0.755,
       auto_reset_credit_7d_threshold: 0.92
     })
     expect(extra).not.toHaveProperty('codex_auto_reset_credit_state')
+    wrapper.unmount()
+  })
+
+  it('只选择 7d 时保存触发条件并禁用 5h 阈值', async () => {
+    const account = buildOpenAIOAuthParentAccount()
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-condition"]').setValue(false)
+    expect(wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      auto_reset_credit_enabled: true,
+      auto_reset_credit_5h_disabled: true,
+      auto_reset_credit_7d_disabled: false,
+      auto_reset_credit_7d_threshold: 1
+    })
+    wrapper.unmount()
+  })
+
+  it('开启后不能取消所有触发条件', async () => {
+    const wrapper = mountModal(buildOpenAIOAuthParentAccount())
+    await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-condition"]').setValue(false)
+    await wrapper.get('[data-testid="auto-reset-credit-7d-condition"]').setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

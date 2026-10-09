@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
@@ -46,22 +47,15 @@ func RegisterGatewayRoutes(
 	groupModelAllowlist := middleware.GroupModelAllowlist()
 
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok,
-			service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek,
-			service.PlatformMiniMax, service.PlatformOpenCodeGo:
-			// 国产 OpenAI 兼容供应商与 openai/grok 一样经 OpenAI 网关转发。
-			return true
-		default:
-			return false
-		}
+		// openai、grok 与多协议 API Key 供应商经 OpenAI 网关转发（平台清单）。
+		return domain.UsesOpenAIGateway(getGroupPlatform(c))
 	}
 	countTokensHandler := func(c *gin.Context) {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax, service.PlatformOpenCodeGo:
-			h.OpenAIGateway.CountTokens(c)
-		case service.PlatformGrok:
+		switch platform := getGroupPlatform(c); {
+		case platform == service.PlatformGrok:
 			h.OpenAIGateway.GrokCountTokens(c)
+		case domain.UsesOpenAIGateway(platform):
+			h.OpenAIGateway.CountTokens(c)
 		default:
 			h.Gateway.CountTokens(c)
 		}
@@ -204,7 +198,13 @@ func RegisterGatewayRoutes(
 			h.Gateway.Messages(c)
 		})
 		// System One carries only JSON text, so it uses the text body limit.
-		gateway.POST("/systemone", textBodyLimit, h.Gateway.SystemOne)
+		gateway.POST("/systemone", textBodyLimit, func(c *gin.Context) {
+			dispatchGatewayByTargetPlatform(c, service.PlatformOpenAI, h.OpenAIGateway.SystemOneViaDecisions, h.Gateway.SystemOne)
+		})
+		// Decisions accepts inline images and uses the gateway body limit.
+		gateway.POST("/decisions", func(c *gin.Context) {
+			dispatchGatewayByTargetPlatform(c, service.PlatformTypeSafe, h.Gateway.DecisionsViaSystemOne, h.OpenAIGateway.Decisions)
+		})
 		// /v1/messages/count_tokens: OpenAI bridges upstream, Grok estimates
 		// locally, and Anthropic-compatible platforms retain their existing path.
 		gateway.POST("/messages/count_tokens", countTokensHandler)
@@ -533,6 +533,14 @@ func dispatchCodexModelsGateway(c *gin.Context, openAIHandler, generatedHandler 
 	generatedHandler(c)
 }
 
+func dispatchGatewayByTargetPlatform(c *gin.Context, targetPlatform string, targetHandler, fallbackHandler gin.HandlerFunc) {
+	if getGroupPlatform(c) == targetPlatform {
+		targetHandler(c)
+		return
+	}
+	fallbackHandler(c)
+}
+
 // getGroupPlatform extracts the group platform from the API Key stored in context.
 func getGroupPlatform(c *gin.Context) string {
 	apiKey, ok := middleware.GetAPIKeyFromContext(c)
@@ -670,6 +678,7 @@ func compositeRouteEndpointForPath(path string) string {
 	case strings.Contains(path, "/messages"):
 		return service.CompositeRouteEndpointMessages
 	case strings.Contains(path, "/responses"),
+		strings.Contains(path, "/decisions"),
 		strings.Contains(path, "/alpha/search"),
 		strings.Contains(path, "/realtime/calls"),
 		strings.HasSuffix(strings.TrimRight(path, "/"), "/live"):

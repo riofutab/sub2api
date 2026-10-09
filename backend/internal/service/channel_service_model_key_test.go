@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -24,33 +25,6 @@ func TestDuplicateModelKeyParserDiscrepancy(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &cc))
 	require.Equal(t, "expensive", cc.Model, "encoding/json 对重复键取末值")
 	require.Equal(t, "cheap", gjson.GetBytes(body, "model").String(), "gjson 对重复键取首值")
-}
-
-func TestHasDuplicateTopLevelKey(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-		key  string
-		want bool
-	}{
-		{"single model key", `{"model":"a","messages":[]}`, "model", false},
-		{"duplicate model key", `{"model":"a","messages":[],"model":"b"}`, "model", true},
-		{"nested same key is not top level", `{"model":"a","messages":[{"model":"b"}]}`, "model", false},
-		{"duplicate of another key ignored", `{"stream":false,"model":"a","stream":true}`, "model", false},
-		{"key missing", `{"messages":[]}`, "model", false},
-		{"empty body", ``, "model", false},
-		{"case variant duplicate", `{"model":"a","Model":"b"}`, "model", true},
-		{"upper case duplicate", `{"MODEL":"a","messages":[],"model":"b"}`, "model", true},
-		{"escaped key duplicate", `{"model":"a","` + escapedModelKey + `":"b"}`, "model", true},
-		{"nested model in tools is not top level", `{"model":"a","tools":[{"input_schema":{"properties":{"model":{"type":"string"}}}}]}`, "model", false},
-		{"leading whitespace", " \n{\"model\":\"a\",\"model\":\"b\"}", "model", true},
-		{"top level array", `[{"model":"a"},{"model":"b"}]`, "model", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, HasDuplicateTopLevelKey([]byte(tc.body), tc.key))
-		})
-	}
 }
 
 func TestReplaceModelInBodyCollapsesDuplicateModelKeys(t *testing.T) {
@@ -98,7 +72,7 @@ func TestParseGatewayRequestRejectsDuplicateModelKey(t *testing.T) {
 		`{"model":"cheap","messages":[],"` + escapedModelKey + `":"expensive"}`,
 	} {
 		_, err := ParseGatewayRequest(NewRequestBodyRef([]byte(body)), "anthropic")
-		require.ErrorIs(t, err, ErrDuplicateModelKey, body)
+		require.ErrorIs(t, err, requestmodel.ErrDuplicateModelKey, body)
 	}
 
 	parsed, err := ParseGatewayRequest(NewRequestBodyRef([]byte(`{"model":"a","messages":[{"role":"user","content":[{"type":"tool_result","content":"{\"model\":\"b\"}"}]}],"tools":[{"name":"x","input_schema":{"properties":{"model":{"type":"string"}}}}]}`)), "anthropic")
@@ -111,7 +85,7 @@ func TestReplaceModelInBodyCollapsesEscapedDuplicateModelKeys(t *testing.T) {
 
 	out := ReplaceModelInBody(body, "mapped")
 
-	require.False(t, HasDuplicateTopLevelKey(out, "model"), string(out))
+	require.False(t, requestmodel.HasDuplicateTopLevelKey(out, "model"), string(out))
 	require.Equal(t, "mapped", gjson.GetBytes(out, "model").String())
 	var decoded struct {
 		Model string `json:"model"`
@@ -129,7 +103,7 @@ func TestReplaceModelInBodySingleKey(t *testing.T) {
 		body := []byte(`{"alpha":1,"model":"a","messages":[],"omega":2}`)
 		out := ReplaceModelInBody(body, "b")
 		require.Equal(t, "b", gjson.GetBytes(out, "model").String())
-		require.False(t, HasDuplicateTopLevelKey(out, "model"))
+		require.False(t, requestmodel.HasDuplicateTopLevelKey(out, "model"))
 		assertTopLevelOrder(t, out, `"alpha"`, `"model"`, `"messages"`, `"omega"`)
 	})
 	t.Run("empty body returned as is", func(t *testing.T) {

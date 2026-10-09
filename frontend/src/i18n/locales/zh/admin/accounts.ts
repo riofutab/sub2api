@@ -378,12 +378,15 @@ export default {
         },
         protocolRules: {
           title: '模型协议分流',
-          hint: '自适应模式下按模型匹配上游协议。支持精确 ID 或末尾 * 通配（如 grok-*、qwen*）；自上而下第一条命中生效；未命中走 Chat Completions。',
+          hint: '自适应模式下按模型匹配上游协议。支持精确 ID 或末尾 * 通配（如 grok-*、qwen*）；自上而下第一条命中生效。入站协议是模型也支持的协议时同协议直通、不做转换，否则走所选协议。',
           patternPlaceholder: 'grok-* 或 deepseek-v4-flash',
           add: '添加规则',
           remove: '删除规则',
           restoreDefaults: '恢复默认',
+          alsoSupports: '也支持',
+          alsoSupportsHint: '以这些协议进来的请求同协议直通，免去协议转换',
           fallback: '未命中以上规则 → Chat Completions（/v1/chat/completions）',
+          catalogFallback: '未命中以上规则 → 按上游模型列表（/models 的 supported_endpoints）选协议；列表不可用时走 Chat Completions',
         },
         title: 'OpenCode Go 用量',
         panelHint: '上游 OpenCode Go 账号上报的用量窗口。可手动刷新，或开启自动刷新。',
@@ -792,6 +795,8 @@ export default {
         imagesUrlToB64Json: '生图结果 URL 转 base64',
         imagesUrlToB64JsonDesc:
           '仅对 OpenAI API Key 的 Images 非流式响应生效。上游返回的图片缺少 b64_json 但带 url 时，网关下载该 url 并以 base64 回填 b64_json（url 保留），兼容按官方接口实现的客户端；下载失败则原样返回。',
+        decisionsProtocol: 'Decisions 上游协议',
+        decisionsProtocolDesc: 'OpenAI 使用原生接口。OpenRouter 支持文本和单张内联图片，请配置对应 Base URL 和 API Key。',
         endpointCapabilities: '端点能力',
         endpointCapabilitiesDesc:
           '用于调度筛选。文本端点会跟随上方 Responses API 支持显示为 Responses、Chat Completions 或自动模式；Embeddings 独立控制 /v1/embeddings。',
@@ -960,7 +965,7 @@ export default {
       poolModeRetryCount: '同账号重试次数',
       poolModeRetryCountHint: '仅在池模式下生效。0 表示不原地重试；默认 {default}，最大 {max}。',
       poolModeRetryStatusCodes: '同账号重试状态码',
-      poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。留空使用默认值（{default}）。',
+      poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。列入 503 且账号未配置代理时，连不上上游（拒绝连接、网络不可达等）也按 503 原地重试，不再临时停调度 10 分钟。留空使用默认值（{default}）。',
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
       customErrorCodesWarning:
@@ -1089,9 +1094,12 @@ export default {
       autoResetCredit: {
 	    title: '自动使用重置卡',
 	    hint: '仅在实际用量达到阈值时使用最早到期的可用卡；默认关闭。无卡或失败时账号保持暂停。',
+	    condition5h: '5h 触发',
+	    condition7d: '7d 触发',
+	    conditionRequired: '请至少选择一个自动用卡触发条件。',
 	    threshold5h: '5h 自动用卡阈值(%)',
 	    threshold7d: '7d 自动用卡阈值(%)',
-	    thresholdHint: '两个窗口独立判断，任一达到自身阈值即触发。可填写 0.1–100，默认均为 100。',
+	    thresholdHint: '勾选的窗口独立判断，任一达到自身阈值即触发。可填写 0.1–100，默认均为 100。',
 	    thresholdInvalid: '自动使用重置卡阈值必须在 0.1% 到 100% 之间。'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
