@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/decisionbridge"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	openai_decisions "github.com/Wei-Shaw/sub2api/internal/pkg/openai_decisions"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -19,17 +21,42 @@ import (
 // Decisions handles OpenAI's typed, non-streaming Decisions API.
 // POST /v1/decisions
 func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
+	h.decisions(c, false)
+}
+
+// SystemOneViaDecisions uses the same eligibility, failover and billing path as
+// native Decisions, but keeps the client's System One envelope at the edge.
+func (h *OpenAIGatewayHandler) SystemOneViaDecisions(c *gin.Context) {
+	h.decisions(c, true)
+}
+
+func (h *OpenAIGatewayHandler) decisions(c *gin.Context, bridge bool) {
+	writeError := h.errorResponse
+	if bridge {
+		writeError = func(c *gin.Context, status int, typ, message string) {
+			c.JSON(status, gin.H{"type": "error", "error": gin.H{"type": typ, "message": message}})
+		}
+	}
+	failoverExhausted := func(f *service.UpstreamFailoverError) {
+		if !bridge {
+			h.handleFailoverExhausted(c, f, false)
+			return
+		}
+		copyFailoverRetryAfter(c, f.ResponseHeaders)
+		status, typ, message := h.mapUpstreamError(f.StatusCode)
+		writeError(c, status, typ, message)
+	}
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
 	started := time.Now()
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil || apiKey.Group == nil {
-		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		writeError(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
+		writeError(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
 	reqLog := requestLogger(c, "handler.openai_gateway.decisions",
@@ -40,45 +67,82 @@ func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		if maxErr, ok := extractMaxBytesError(err); ok {
-			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+			writeError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		writeError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
+	}
+	clientBody := body
+	if bridge {
+		body, err = decisionbridge.ToDecisions(clientBody)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
 	}
 	req, err := openai_decisions.ParseRequest(body)
 	if err != nil {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		writeError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 	if apiKey.Group.Platform != service.PlatformOpenAI && apiKey.Group.Platform != service.PlatformComposite {
-		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Decisions is only available for OpenAI and Composite groups")
+		writeError(c, http.StatusNotFound, "not_found_error", "Decisions is only available for OpenAI and Composite groups")
 		return
 	}
 	ensureCompositeTargetPlatform(c, apiKey, req.Model)
 	if !compositeTargetPlatformAllowed(c, apiKey, req.Model, service.PlatformOpenAI) {
-		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Decisions only supports OpenAI targets for Composite groups")
+		writeError(c, http.StatusNotFound, "not_found_error", "Decisions only supports OpenAI targets for Composite groups")
 		return
 	}
 	reqLog = reqLog.With(zap.String("model", req.Model), zap.Int("image_count", req.ImageCount))
-	setOpsRequestContext(c, req.Model, false)
+	clientModel := req.Model
+	if bridge {
+		clientModel = typesafe.JevLatestModel
+	}
+	setOpsRequestContext(c, clientModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
-	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIDecisions, req.Model, body); decision != nil && !decision.AllowNextStage {
-		h.openAISecurityAuditError(c, decision)
+	auditProtocol, auditModel := service.ContentModerationProtocolOpenAIDecisions, req.Model
+	if bridge {
+		auditProtocol, auditModel = service.ContentModerationProtocolTypeSafeSystemOne, typesafe.JevLatestModel
+	}
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, auditProtocol, auditModel, clientBody); decision != nil && !decision.AllowNextStage {
+		if bridge {
+			h.anthropicSecurityAuditError(c, decision)
+		} else {
+			h.openAISecurityAuditError(c, decision)
+		}
 		return
 	}
 	channelMapping, restricted := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, req.Model)
+	if bridge {
+		channelMapping.BillingModelSource = service.BillingModelSourceUpstream
+	}
 	if restricted {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Decisions model is not allowed by the channel")
+		writeError(c, http.StatusBadRequest, "invalid_request_error", "Decisions model is not allowed by the channel")
 		return
 	}
 	if channelMapping.Mapped && channelMapping.MappedModel != req.Model {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Decisions channel mapping must preserve gpt-6-luna")
+		writeError(c, http.StatusBadRequest, "invalid_request_error", "Decisions channel mapping must preserve gpt-6-luna")
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(started).Milliseconds())
-	userRelease, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
+	var userRelease func()
+	acquired := true
+	if bridge {
+		var slotErr error
+		userRelease, slotErr = h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+		if slotErr != nil {
+			status, typ, _, message := concurrencyErrorResponse(slotErr, "user")
+			writeError(c, status, typ, message)
+			acquired = false
+		} else {
+			userRelease = wrapReleaseOnDone(c.Request.Context(), userRelease)
+		}
+	} else {
+		userRelease, acquired = h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
+	}
 	if !acquired {
 		return
 	}
@@ -90,7 +154,7 @@ func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.errorResponse(c, status, code, message)
+		writeError(c, status, code, message)
 		return
 	}
 	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(req.Model, body))
@@ -99,7 +163,7 @@ func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		h.errorResponse(c, status, code, message)
+		writeError(c, status, code, message)
 		return
 	}
 	defer inflightRelease()
@@ -131,23 +195,36 @@ func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
 				return
 			}
 			if req.ImageCount > 1 && lastFailover == nil {
-				h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Decisions accounts support this multi-image request")
+				writeError(c, http.StatusServiceUnavailable, "api_error", "No available Decisions accounts support this multi-image request")
 				return
 			}
 			if lastFailover != nil {
-				h.handleFailoverExhausted(c, lastFailover, false)
+				failoverExhausted(lastFailover)
 			} else {
 				cls := classifyOpenAICompatibleNoAccountErrorFromGin(c, h.gatewayService, apiKey, req.Model, req.Model)
-				h.errorResponse(c, cls.Status, cls.ErrType, cls.Message)
+				writeError(c, cls.Status, cls.ErrType, cls.Message)
 			}
 			return
 		}
 		account := selection.Account
 		setOpsSelectedAccount(c, account.ID, account.Platform)
-		accountRelease, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
+		var accountRelease func()
+		var slotResult openAISlotAcquireResult
+		if bridge {
+			accountRelease, slotResult = h.acquireOpenAIAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog,
+				func(status int, typ, _, message string) { writeError(c, status, typ, message) })
+		} else {
+			accountRelease, slotResult = h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
+		}
 		if slotResult == openAISlotAcquireProfitVetoed {
 			if !recordOpenAIProfitVeto(failedIDs, account.ID, &profitVetoCount) {
-				h.handleOpenAIProfitVetoExhausted(c, false, reqLog, profitVetoCount)
+				if bridge {
+					markOpsRoutingCapacityLimited(c)
+					recordNoAvailableAccountsReasonForOps(c, profitVetoExhaustedReason)
+					writeError(c, http.StatusServiceUnavailable, "api_error", noAvailableAccountsClientMessage)
+				} else {
+					h.handleOpenAIProfitVetoExhausted(c, false, reqLog, profitVetoCount)
+				}
 				return
 			}
 			continue
@@ -172,40 +249,66 @@ func (h *OpenAIGatewayHandler) Decisions(c *gin.Context) {
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account, req.Model, false, nil, forwardErr)
 				}
 				if !failoverErr.ShouldRetryNextAccount() {
-					h.handleFailoverExhausted(c, failoverErr, false)
+					failoverExhausted(failoverErr)
 					return
 				}
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				lastFailover = failoverErr
 				failedIDs[account.ID] = struct{}{}
 				if switches >= maxSwitches {
-					h.handleFailoverExhausted(c, failoverErr, false)
+					failoverExhausted(failoverErr)
 					return
 				}
 				switches++
 				continue
 			}
-			h.errorResponse(c, http.StatusBadGateway, "upstream_error", "OpenAI Decisions upstream request failed")
+			writeError(c, http.StatusBadGateway, "upstream_error", "OpenAI Decisions upstream request failed")
 			return
+		}
+		if bridge && (result.StatusCode < 200 || result.StatusCode >= 300) {
+			copyFailoverRetryAfter(c, result.UpstreamHeaders)
+			status, typ, message := h.mapUpstreamError(result.StatusCode)
+			if result.StatusCode == http.StatusBadRequest || result.StatusCode == http.StatusRequestEntityTooLarge || result.StatusCode == http.StatusUnprocessableEntity {
+				status, typ, message = result.StatusCode, "invalid_request_error", "Decisions upstream rejected the request"
+			}
+			writeError(c, status, typ, message)
+			return
+		}
+		if bridge && result.StatusCode >= 200 && result.StatusCode < 300 {
+			converted, conversionErr := decisionbridge.FromDecisions(clientBody, body, result.Body)
+			if conversionErr != nil {
+				service.SetOpsUpstreamError(c, result.StatusCode, "Decisions response cannot be represented as System One", "")
+				reqLog.Warn("decision_bridge.response_conversion_failed", zap.Int64("account_id", account.ID))
+				// The upstream succeeded and reported tokens even though the answer
+				// cannot be exposed to this client. Keep the mandatory usage record.
+				h.recordDecisionsUsage(c, apiKey, account, subscription, clientBody, &result.OpenAIForwardResult, pricingAt, subject.UserID, channelMapping)
+				writeError(c, http.StatusBadGateway, "upstream_error", "Decisions response cannot be represented as System One")
+				return
+			}
+			result.Body = converted
 		}
 		if result.StatusCode >= 200 && result.StatusCode < 300 {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, result.UpstreamModel, true, nil)
 		}
 		c.Data(result.StatusCode, result.ContentType, result.Body)
 		if result.StatusCode >= 200 && result.StatusCode < 300 {
-			h.recordDecisionsUsage(c, apiKey, account, subscription, body, &result.OpenAIForwardResult, pricingAt, subject.UserID, channelMapping)
+			h.recordDecisionsUsage(c, apiKey, account, subscription, clientBody, &result.OpenAIForwardResult, pricingAt, subject.UserID, channelMapping)
 		}
 		return
 	}
 }
 
 func decisionsUsageSnapshot(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, body []byte, result *service.OpenAIForwardResult, pricingAt time.Time, mapping service.ChannelMappingResult) service.OpenAIRecordUsageInput {
+	usageFields := clientRequestedUsageFields(c, mapping, openai_decisions.Model, result.UpstreamModel)
+	if GetInboundEndpoint(c) == EndpointSystemOne {
+		usageFields.OriginalModel = typesafe.JevLatestModel
+	}
 	return service.OpenAIRecordUsageInput{
 		Result: result, APIKey: apiKey, User: apiKey.User, Account: account, Subscription: subscription,
 		InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: result.UpstreamEndpoint,
 		UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c), SessionID: service.ExtractClientSessionID(c),
 		RequestPayloadHash: service.HashUsageRequestPayload(body), QuotaPlatform: service.QuotaPlatform(c.Request.Context(), apiKey), PricingAt: pricingAt,
-		ChannelUsageFields: clientRequestedUsageFields(c, mapping, openai_decisions.Model, result.UpstreamModel),
+		ChannelUsageFields: usageFields,
 	}
 }
 
