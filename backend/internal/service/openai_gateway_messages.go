@@ -431,14 +431,14 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 			return s.ForwardAsAnthropic(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel)
 		}
-		// Grok account-switched history often fails decrypt; strip encrypted
-		// reasoning once at the client-body level so failover accounts can accept
-		// the multi-turn tool continuation instead of cascading 400s.
-		if account.Platform == PlatformGrok &&
-			isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
+		// Encrypted reasoning is bound to the account that produced it (Grok and
+		// GPT alike); after an account switch, strip signatures once at the
+		// client-body level so the new account accepts the continuation instead
+		// of failing every later turn.
+		if isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody) &&
 			!grokEncryptedContentStripRetried(ctx) {
 			if strippedBody, ok := stripAnthropicThinkingSignatures(body); ok {
-				logger.L().Info("openai messages: stripping thinking signatures for Grok failover retry",
+				logger.L().Info("openai messages: stripping thinking signatures after invalid encrypted_content",
 					zap.Int64("account_id", account.ID),
 				)
 				return s.ForwardAsAnthropic(markGrokEncryptedContentStripRetried(ctx), c, account, strippedBody, promptCacheKey, defaultMappedModel)

@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -68,4 +71,33 @@ func TestForwardAsAnthropic_StatelessToolHistory(t *testing.T) {
 			}
 		}
 	}
+}
+
+// GPT encrypted reasoning is bound to the account that produced it. After a
+// session switches accounts, the new account rejects the replayed signature;
+// the bridge must strip signatures once and retry instead of failing every turn.
+func TestForwardAsAnthropic_OpenAIInvalidEncryptedContentStripsSignaturesOnce(t *testing.T) {
+	account := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://api.openai.com/v1"}}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"The encrypted content could not be verified.","type":"invalid_request_error","param":null,"code":"invalid_encrypted_content"}}`)),
+		},
+		openAICompatSSECompletedResponse("resp_retry", "gpt-6-luna"),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	body := []byte(`{"model":"gpt-6-luna","max_tokens":128,"messages":[` +
+		`{"role":"user","content":"remember the code"},` +
+		`{"role":"assistant","content":[{"type":"thinking","thinking":"noted","signature":"gAAAAforeign-account-ciphertext"},{"type":"text","text":"READY"}]},` +
+		`{"role":"user","content":"what was the code?"}]}`)
+
+	c := adaptiveProtocolTestContext("/v1/messages", body)
+	_, err := svc.ForwardAsAnthropic(context.Background(), c, account, body, "", "")
+
+	require.NoError(t, err)
+	require.Len(t, upstream.bodies, 2)
+	require.Contains(t, string(upstream.bodies[0]), "gAAAAforeign-account-ciphertext")
+	require.NotContains(t, string(upstream.bodies[1]), "gAAAAforeign-account-ciphertext")
+	require.Contains(t, string(upstream.bodies[1]), "remember the code")
 }
