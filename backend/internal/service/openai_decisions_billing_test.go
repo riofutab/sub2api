@@ -22,7 +22,7 @@ func TestDecisionsBillingUsesDedicatedCardAndKeepsChannelPrices(t *testing.T) {
 			svc.resolver = NewModelPricingResolver(cs, billing)
 		}
 		result := &OpenAIForwardResult{Model: "gpt-6-luna", UpstreamModel: "openai/gpt-6-luna-decisions"}
-		cost, err := svc.calculateOpenAIRecordUsageCost(context.Background(), result, key, []string{"gpt-6-luna"}, 2, 1, 1, 1, UsageTokens{InputTokens: 1_000_000, OutputTokens: 100, CacheReadTokens: 100}, "", nil, time.Now())
+		cost, err := svc.calculateOpenAIRecordUsageCost(context.Background(), result, key, []string{"gpt-6-luna"}, 2, 1, 1, 1, UsageTokens{InputTokens: 1_000_000, OutputTokens: 100, CacheReadTokens: 100}, "", nil, false, time.Now())
 		require.NoError(t, err)
 		if custom {
 			require.InDelta(t, 2*(1+100*2.4e-6+100*0.04e-6), cost.ActualCost, 1e-10)
