@@ -432,13 +432,6 @@ function normalizeConfig(value: MonitorConfig): MonitorConfig {
   const ignored = value.ignored_error_categories
   return {
     ...value,
-    // Preserve saved/custom platforms and expose missing providers as disabled.
-    platforms: [
-      ...value.platforms,
-      ...CONCRETE_PLATFORM_OPTIONS
-        .filter(({ value: platform }) => !value.platforms.some((item) => item.platform === platform))
-        .map(({ value: platform }) => ({ platform, enabled: false, models: [] })),
-    ],
     health_thresholds: { ...defaultThresholds, ...(value.health_thresholds || {}) },
     // Preserve explicit empty arrays from the server (operator cleared all).
     ignored_error_categories: [
