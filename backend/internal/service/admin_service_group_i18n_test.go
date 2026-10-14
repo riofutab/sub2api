@@ -51,6 +51,24 @@ func TestAdminService_CreateGroup_RejectsInvalidI18nLocale(t *testing.T) {
 	require.Nil(t, repo.created)
 }
 
+func TestAdminService_CreateGroup_RejectsCaseCollidingI18nLocales(t *testing.T) {
+	repo := &groupRepoStubForAdmin{}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:           "默认",
+		Platform:       PlatformAnthropic,
+		RateMultiplier: 1.0,
+		I18n:           GroupI18n{"en": {Name: "English A"}, "EN": {Name: "English B"}},
+	})
+
+	require.Error(t, err)
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, int32(http.StatusBadRequest), appErr.Code)
+	require.Equal(t, "INVALID_GROUP_I18N", appErr.Reason)
+	require.Nil(t, repo.created)
+}
+
 func TestAdminService_UpdateGroup_I18n(t *testing.T) {
 	newExisting := func() *Group {
 		return &Group{

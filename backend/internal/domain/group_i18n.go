@@ -39,17 +39,49 @@ func (m GroupI18n) LocalizeName(acceptLanguage, name string) string {
 	return name
 }
 
+// CanonicalLocale 按 BCP 47 的惯用大小写书写语言代码：主语言小写，4 位文字代码首字母大写，
+// 2 位地区代码大写，其余小写（zh-hant-tw -> zh-Hant-TW）；单字母扩展标记之后的部分全部小写。
+// 只调整大小写，不校验代码是否合法。
+func CanonicalLocale(locale string) string {
+	subtags := strings.Split(locale, "-")
+	extension := false
+	for i, subtag := range subtags {
+		subtag = strings.ToLower(subtag)
+		switch {
+		case i == 0 || extension:
+		case len(subtag) == 1:
+			extension = true
+		case len(subtag) == 2:
+			subtag = strings.ToUpper(subtag)
+		case len(subtag) == 4:
+			subtag = strings.ToUpper(subtag[:1]) + subtag[1:]
+		}
+		subtags[i] = subtag
+	}
+	return strings.Join(subtags, "-")
+}
+
 // lookup 先按完整语言代码匹配（zh-TW），再按主语言匹配（zh-CN -> zh），不区分大小写。
+// 写入时语言代码已统一为 CanonicalLocale，同一语言只有一个键；若存有仅大小写不同的多个键，
+// 规范写法的键优先，其余按字节序取最小者，保证同一请求语言的结果固定。
 func (m GroupI18n) lookup(tag string) (GroupLocaleText, bool) {
 	if tag == "" || len(m) == 0 {
 		return GroupLocaleText{}, false
 	}
 	primary, _, _ := strings.Cut(tag, "-")
 	for _, candidate := range []string{tag, primary} {
-		for locale, text := range m {
-			if strings.EqualFold(locale, candidate) {
-				return text, true
+		candidate = CanonicalLocale(candidate)
+		if text, ok := m[candidate]; ok {
+			return text, true
+		}
+		matched := ""
+		for locale := range m {
+			if strings.EqualFold(locale, candidate) && (matched == "" || locale < matched) {
+				matched = locale
 			}
+		}
+		if matched != "" {
+			return m[matched], true
 		}
 	}
 	return GroupLocaleText{}, false

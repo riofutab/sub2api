@@ -28,6 +28,28 @@ func TestNormalizeGroupI18n(t *testing.T) {
 		}, got)
 	})
 
+	t.Run("locale codes are stored in canonical case", func(t *testing.T) {
+		got, err := normalizeGroupI18n(GroupI18n{
+			"EN":    {Name: "Standard"},
+			"zh-tw": {Name: "標準"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, GroupI18n{
+			"en":    {Name: "Standard"},
+			"zh-TW": {Name: "標準"},
+		}, got)
+	})
+
+	t.Run("rejects locales that collide after canonicalization", func(t *testing.T) {
+		for _, in := range []GroupI18n{
+			{"en": {Name: "English A"}, "EN": {Name: "English B"}},
+			{"zh-TW": {Name: "標準"}, "zh-tw": {}},
+		} {
+			_, err := normalizeGroupI18n(in)
+			require.Errorf(t, err, "input %v should be rejected", in)
+		}
+	})
+
 	t.Run("rejects malformed locale codes", func(t *testing.T) {
 		for _, locale := range []string{"", "e", "en_US", "en-", "中文", "en us"} {
 			_, err := normalizeGroupI18n(GroupI18n{locale: {Name: "x"}})
