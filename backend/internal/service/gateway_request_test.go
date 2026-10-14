@@ -68,7 +68,7 @@ func TestValidateHaiku55Request(t *testing.T) {
 		{body: `{"top_p":0.99}`},
 		{body: `{"temperature":1,"top_p":0.99}`, wantErr: "temperature and top_p together"},
 		{body: `{"top_p":1}`, wantErr: "top_p"},
-		{body: `{"thinking":{"type":"enabled","budget_tokens":2048}}`, wantErr: "budget_tokens"},
+		{body: `{"thinking":{"type":"enabled","budget_tokens":2048}}`, wantErr: "requires adaptive thinking"},
 		{body: `{"thinking":{"type":"between_tools"}}`, wantErr: "between_tools"},
 		{body: `{"thinking":{"type":"disabled"},"output_config":{"effort":"xhigh"}}`, wantErr: "low, medium or high"},
 		{body: `{"thinking":{"type":"disabled"},"output_config":{"effort":"max"}}`, wantErr: "low, medium or high"},

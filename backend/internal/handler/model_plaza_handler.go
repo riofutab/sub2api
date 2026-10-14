@@ -152,7 +152,8 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
 
 	// 广场可匿名访问，分组文案随请求语言变化，提示中间缓存按语言区分。
-	c.Header("Vary", "Accept-Language")
+	// 追加而非覆盖：CORS 中间件已为具体来源写入 Vary: Origin。
+	c.Writer.Header().Add("Vary", "Accept-Language")
 	out := toLocalizedModelPlazaGroups(visible, userRates, c.GetHeader("Accept-Language"))
 	response.Success(c, modelPlazaResponse{
 		Description: rt.Description,

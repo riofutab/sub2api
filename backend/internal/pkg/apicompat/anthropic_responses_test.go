@@ -1919,6 +1919,29 @@ func TestSonnet55ResponsesThinkingAndSampling(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSonnet55SignedThinkingResponsesRoundTrip(t *testing.T) {
+	block := AnthropicContentBlock{Type: "thinking", Thinking: "", Signature: "signed-sonnet-block"}
+	response := AnthropicToResponsesResponse(&AnthropicResponse{Model: "claude-sonnet-5-5", Content: []AnthropicContentBlock{block, {Type: "text", Text: "progress"}, {Type: "tool_use", ID: "toolu_1", Name: "lookup", Input: json.RawMessage(`{}`)}}})
+	require.Len(t, response.Output, 3)
+	require.NotEmpty(t, response.Output[0].EncryptedContent)
+	require.Equal(t, "message", response.Output[1].Type)
+	raw, err := json.Marshal(response.Output)
+	require.NoError(t, err)
+	var items []ResponsesInputItem
+	require.NoError(t, json.Unmarshal(raw, &items))
+	items = append(items, ResponsesInputItem{Type: "function_call_output", CallID: response.Output[2].CallID, Output: "ok"})
+	raw, err = json.Marshal(items)
+	require.NoError(t, err)
+	converted, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-sonnet-5-5", Input: raw})
+	require.NoError(t, err)
+	require.Len(t, converted.Messages, 2)
+	var blocks []AnthropicContentBlock
+	require.NoError(t, json.Unmarshal(converted.Messages[0].Content, &blocks))
+	require.Equal(t, block, blocks[0])
+	require.Equal(t, "text", blocks[1].Type)
+	require.Equal(t, "tool_use", blocks[2].Type)
+}
+
 func TestHaiku55ResponsesThinkingAndSampling(t *testing.T) {
 	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max", "none"} {
 		req := &ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Reasoning: &ResponsesReasoning{Effort: effort}}
@@ -1936,7 +1959,7 @@ func TestHaiku55ResponsesThinkingAndSampling(t *testing.T) {
 			require.Equal(t, effort, out.OutputConfig.Effort)
 		}
 	}
-	// Haiku 5.5 accepts forced tool use, unlike Opus/Sonnet 5.5.
+	// Haiku 5.5 accepts forced tool_choice, unlike opus/sonnet 5.5.
 	for _, choice := range []string{`"required"`, `{"type":"function","name":"lookup"}`} {
 		out, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), ToolChoice: json.RawMessage(choice)})
 		require.NoError(t, err, choice)
@@ -1945,42 +1968,26 @@ func TestHaiku55ResponsesThinkingAndSampling(t *testing.T) {
 	temperature := 0.7
 	_, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Temperature: &temperature})
 	require.ErrorContains(t, err, "temperature")
-	topP := 0.5
-	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
-	require.ErrorContains(t, err, "top_p")
+	for _, topP := range []float64{0.5, 0.995, 1} {
+		_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
+		require.ErrorContains(t, err, "top_p", "top_p=%v", topP)
+	}
 	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Reasoning: &ResponsesReasoning{Effort: "minimal"}})
 	require.ErrorContains(t, err, "reasoning effort")
 
-	topP = 1
-	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
-	require.ErrorContains(t, err, "top_p")
-	temperature, topP = 1, 0.99
-	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Temperature: &temperature, TopP: &topP})
-	require.ErrorContains(t, err, "temperature and top_p together")
+	temperature = 1
+	topP := 0.99
+	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Temperature: &temperature})
+	require.NoError(t, err)
 	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), TopP: &topP})
 	require.NoError(t, err)
+	_, err = ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: json.RawMessage(`"hello"`), Temperature: &temperature, TopP: &topP})
+	require.ErrorContains(t, err, "together")
 }
 
 func TestHaiku55SignedThinkingResponsesRoundTrip(t *testing.T) {
 	block := AnthropicContentBlock{Type: "thinking", Thinking: "", Signature: "signed-haiku-block"}
-	response := AnthropicToResponsesResponse(&AnthropicResponse{Model: "claude-haiku-5-5", Content: []AnthropicContentBlock{block, {Type: "text", Text: "answer"}}})
-	require.NotEmpty(t, response.Output[0].EncryptedContent)
-	raw, err := json.Marshal(response.Output)
-	require.NoError(t, err)
-	var items []ResponsesInputItem
-	require.NoError(t, json.Unmarshal(raw, &items))
-	raw, err = json.Marshal(items)
-	require.NoError(t, err)
-	converted, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: raw})
-	require.NoError(t, err)
-	var blocks []AnthropicContentBlock
-	require.NoError(t, json.Unmarshal(converted.Messages[0].Content, &blocks))
-	require.Equal(t, block, blocks[0])
-}
-
-func TestSonnet55SignedThinkingResponsesRoundTrip(t *testing.T) {
-	block := AnthropicContentBlock{Type: "thinking", Thinking: "", Signature: "signed-sonnet-block"}
-	response := AnthropicToResponsesResponse(&AnthropicResponse{Model: "claude-sonnet-5-5", Content: []AnthropicContentBlock{block, {Type: "text", Text: "progress"}, {Type: "tool_use", ID: "toolu_1", Name: "lookup", Input: json.RawMessage(`{}`)}}})
+	response := AnthropicToResponsesResponse(&AnthropicResponse{Model: "claude-haiku-5-5", Content: []AnthropicContentBlock{block, {Type: "text", Text: "progress"}, {Type: "tool_use", ID: "toolu_1", Name: "lookup", Input: json.RawMessage(`{}`)}}})
 	require.Len(t, response.Output, 3)
 	require.NotEmpty(t, response.Output[0].EncryptedContent)
 	require.Equal(t, "message", response.Output[1].Type)
@@ -1991,7 +1998,7 @@ func TestSonnet55SignedThinkingResponsesRoundTrip(t *testing.T) {
 	items = append(items, ResponsesInputItem{Type: "function_call_output", CallID: response.Output[2].CallID, Output: "ok"})
 	raw, err = json.Marshal(items)
 	require.NoError(t, err)
-	converted, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-sonnet-5-5", Input: raw})
+	converted, err := ResponsesToAnthropicRequest(&ResponsesRequest{Model: "claude-haiku-5-5", Input: raw})
 	require.NoError(t, err)
 	require.Len(t, converted.Messages, 2)
 	var blocks []AnthropicContentBlock

@@ -65,3 +65,43 @@ func TestGroupI18nLocalizeName(t *testing.T) {
 		t.Fatalf("LocalizeName(zh) = %q", got)
 	}
 }
+
+func TestCanonicalLocale(t *testing.T) {
+	tests := map[string]string{
+		"en":            "en",
+		"EN":            "en",
+		"zh-tw":         "zh-TW",
+		"ZH-Hant-tw":    "zh-Hant-TW",
+		"es-419":        "es-419",
+		"de-CH-1901":    "de-CH-1901",
+		"en-US-x-Twain": "en-US-x-twain",
+	}
+	for in, want := range tests {
+		if got := CanonicalLocale(in); got != want {
+			t.Errorf("CanonicalLocale(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// 写入路径已拒绝仅大小写不同的语言代码；已存在的此类数据读取时也必须得到固定结果。
+func TestGroupI18nLocalize_CaseCollidingKeysAreDeterministic(t *testing.T) {
+	tests := []struct {
+		title          string
+		i18n           GroupI18n
+		acceptLanguage string
+		want           string
+	}{
+		{"canonical key wins", GroupI18n{"EN": {Name: "B"}, "en": {Name: "A"}, "En": {Name: "C"}}, "en", "A"},
+		{"otherwise the smallest key wins", GroupI18n{"eN": {Name: "B"}, "EN": {Name: "A"}}, "en", "A"},
+		{"primary language fallback is deterministic too", GroupI18n{"ZH": {Name: "B"}, "zh": {Name: "A"}}, "zh-CN", "A"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			for range 200 {
+				if got := tt.i18n.LocalizeName(tt.acceptLanguage, "原名"); got != tt.want {
+					t.Fatalf("LocalizeName(%q) = %q, want %q", tt.acceptLanguage, got, tt.want)
+				}
+			}
+		})
+	}
+}

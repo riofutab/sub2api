@@ -739,9 +739,9 @@ func validateHaiku55Request(body []byte) error {
 	const modelName = "claude-haiku-5-5"
 	switch gjson.GetBytes(body, "thinking.type").String() {
 	case "enabled":
-		return fmt.Errorf("%s does not support thinking.budget_tokens; omit thinking or use thinking.type=adaptive and output_config.effort", modelName)
+		return fmt.Errorf("%s requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort", modelName)
 	case "between_tools":
-		return fmt.Errorf("%s does not support thinking.type=between_tools; use adaptive or disabled", modelName)
+		return fmt.Errorf("%s requires adaptive thinking; thinking.type=between_tools is unsupported (use thinking.type=disabled at high effort or below)", modelName)
 	case "disabled":
 		effort := gjson.GetBytes(body, "output_config.effort").String()
 		if effort == "xhigh" || effort == "max" {

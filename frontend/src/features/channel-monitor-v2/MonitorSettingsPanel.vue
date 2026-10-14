@@ -89,6 +89,24 @@
           <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
             {{ t('channelMonitorV2.settings.platformsHint') }}
           </p>
+          <div v-if="availablePlatforms.length" class="mt-3 flex flex-wrap items-center gap-2">
+            <Select
+              v-model="selectedPlatform"
+              class="min-w-48"
+              :options="availablePlatforms"
+              :aria-label="t('channelMonitorV2.settings.selectPlatform')"
+              :placeholder="t('channelMonitorV2.settings.selectPlatform')"
+              :disabled="saving"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :disabled="saving || !selectedPlatform"
+              @click="addPlatform"
+            >
+              {{ t('channelMonitorV2.settings.addPlatform') }}
+            </button>
+          </div>
         </div>
         <div class="divide-y divide-gray-100 dark:divide-dark-700">
           <div
@@ -263,6 +281,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Select from '@/components/common/Select.vue'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -285,6 +304,18 @@ const saving = ref(false)
 const draft = ref<MonitorConfig | null>(null)
 const original = ref('')
 const groups = ref<AdminGroup[]>([])
+const selectedPlatform = ref('')
+const availablePlatforms = computed(() =>
+  CONCRETE_PLATFORM_OPTIONS.filter(
+    (option) => !draft.value?.platforms.some((platform) => platform.platform === option.value)
+  )
+)
+
+function addPlatform() {
+  if (!draft.value || !availablePlatforms.value.some((option) => option.value === selectedPlatform.value)) return
+  draft.value.platforms.push({ platform: selectedPlatform.value, enabled: true, models: [] })
+  selectedPlatform.value = ''
+}
 
 const dirty = computed(() => (draft.value ? JSON.stringify(draft.value) !== original.value : false))
 const namedModelCount = computed(
@@ -401,13 +432,6 @@ function normalizeConfig(value: MonitorConfig): MonitorConfig {
   const ignored = value.ignored_error_categories
   return {
     ...value,
-    // Preserve saved/custom platforms and expose missing providers as disabled.
-    platforms: [
-      ...value.platforms,
-      ...CONCRETE_PLATFORM_OPTIONS
-        .filter(({ value: platform }) => !value.platforms.some((item) => item.platform === platform))
-        .map(({ value: platform }) => ({ platform, enabled: false, models: [] })),
-    ],
     health_thresholds: { ...defaultThresholds, ...(value.health_thresholds || {}) },
     // Preserve explicit empty arrays from the server (operator cleared all).
     ignored_error_categories: [
