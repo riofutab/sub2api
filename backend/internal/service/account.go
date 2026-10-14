@@ -1625,7 +1625,7 @@ func (a *Account) GetCodingPlanProvider() string {
 	}
 	baseURL := strings.ToLower(a.GetOpenAIBaseURL())
 	switch {
-	case strings.Contains(baseURL, "api.kimi.com/coding"):
+	case isKimiCodingBaseURL(a.GetOpenAIBaseURL()):
 		return PlatformKimi
 	case strings.Contains(baseURL, "bigmodel.cn"), strings.Contains(baseURL, "api.z.ai"):
 		return PlatformZhipu
@@ -1648,6 +1648,24 @@ func miniMaxAPIHost(baseURL string) string {
 		return host
 	default:
 		return ""
+	}
+}
+
+func isKimiCodingBaseURL(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(baseURL, "#") {
+		return false
+	}
+	host := strings.ToLower(parsed.Host)
+	if host != "api.kimi.com" && host != "api.kimi.ai" && host != "api.kimi.com:443" && host != "api.kimi.ai:443" {
+		return false
+	}
+	switch parsed.EscapedPath() {
+	case "/coding", "/coding/", "/coding/v1", "/coding/v1/":
+		return true
+	default:
+		return false
 	}
 }
 
