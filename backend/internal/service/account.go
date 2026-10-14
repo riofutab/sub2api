@@ -147,7 +147,7 @@ type TempUnschedulableRule struct {
 	DurationMinutes int      `json:"duration_minutes"`
 	Description     string   `json:"description"`
 	// Scope 决定命中后的隔离粒度：account 暂停整个账号，model 只冷却本次请求的模型。
-	// 为空时模型已知走模型级；401 与模型未知时一律账号级。
+	// 为空时模型已知且非 401 走模型级，否则账号级。
 	Scope string `json:"scope,omitempty"`
 }
 

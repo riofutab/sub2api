@@ -484,7 +484,7 @@ export default {
         scopeModelDesc: '只冷却本次请求的模型',
         scopeAccount: '账户级',
         scopeAccountDesc: '暂停整个账号的调度',
-        scopeHint: '401 规则和无法识别请求模型的命中一律按账户级处理。',
+        scopeHint: '无法识别请求模型时，模型级规则按账户级处理。',
         description: '描述',
         descriptionPlaceholder: '可选，便于记忆规则用途',
         rulesInvalid: '请至少填写一条包含错误码、关键词和时长的规则。',

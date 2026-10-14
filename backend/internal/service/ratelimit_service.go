@@ -322,8 +322,9 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 	}
 	if account.IsPoolMode() {
 		// 池模式只跳过默认账号状态处理；管理员显式配置的临时不可调度规则仍应生效。
-		// 401 保留现有认证错误语义，避免改变重复 401 的升级行为。
-		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+		// 401 只在非凭据级且命中显式模型级规则时由规则处理，其余保留现有认证错误语义。
+		if tempUnschedRulesApply(account, statusCode, responseBody, tempUnschedulableModel(ctx, nil)) &&
+			s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return ErrorPolicyTempUnscheduled
 		}
 		return ErrorPolicySkipped
@@ -349,9 +350,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；但管理员显式配置的临时不可调度规则优先。
-	// 401 保留现有认证错误语义，不在这里改变池模式的认证处理。
+	// 401 只在非凭据级且命中显式模型级规则时由规则处理，其余保留池模式现有的认证处理。
 	if account.IsPoolMode() && !customErrorCodesEnabled {
-		if statusCode != http.StatusUnauthorized && s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
+		if tempUnschedRulesApply(account, statusCode, responseBody, tempUnschedulableModel(ctx, nil)) &&
+			s.tryTempUnschedulable(ctx, account, statusCode, responseBody) {
 			return true
 		}
 		slog.Info("pool_mode_error_skipped", "account_id", account.ID, "status_code", statusCode)
@@ -402,8 +404,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	cnQuota429 := statusCode == http.StatusTooManyRequests &&
 		account.IsCNProvider() && account.IsCodingPlan() &&
 		isCNProviderQuotaExhausted429(account, responseBody)
-	// 先尝试临时不可调度规则（401除外）。如果匹配成功，直接返回，不执行后续禁用逻辑。
-	if statusCode != 401 && !cnQuota429 {
+	// 先尝试临时不可调度规则（401 仅限非凭据级且命中显式模型级规则）
+	// 如果匹配成功，直接返回，不执行后续禁用逻辑
+	if !cnQuota429 && tempUnschedRulesApply(account, statusCode, responseBody, tempUnschedulableModel(ctx, requestedModel)) {
 		if s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel)) {
 			return true
 		}
@@ -2715,15 +2718,60 @@ func firstRequestedModel(requestedModel []string) string {
 	return strings.TrimSpace(requestedModel[0])
 }
 
-// tempUnschedRuleUsesModelScope 决定一次命中按模型级冷却还是账号级暂停。
-// 401 是账号凭证失效，且 tryTempUnschedulable 的 401 升级依赖账号级 reason，
-// 因此无论 scope 如何都按账号级处理；模型未知时无法隔离，也按账号级。
-// 其余情况：显式 scope 由规则决定，scope 为空时走模型级。
-func tempUnschedRuleUsesModelScope(rule TempUnschedulableRule, modelKey string, statusCode int) bool {
-	if statusCode == http.StatusUnauthorized || strings.TrimSpace(modelKey) == "" {
+// tempUnschedRulesApply 决定本次错误是否交给临时不可调度规则处理。
+// 401 默认留给认证错误处理；只有首条命中规则按模型级生效时，才由规则只冷却该模型。
+func tempUnschedRulesApply(account *Account, statusCode int, responseBody []byte, modelKey string) bool {
+	if statusCode != http.StatusUnauthorized {
+		return true
+	}
+	matches := matchTempUnschedulableRules(account, statusCode, responseBody)
+	return len(matches) > 0 && tempUnschedHitUsesModelScope(account, matches[0].rule, modelKey, statusCode, responseBody)
+}
+
+// tempUnschedHitUsesModelScope 决定一次命中是否按模型级冷却：凭据级 401 始终按账号处理，
+// 其余由规则作用范围决定。
+func tempUnschedHitUsesModelScope(account *Account, rule TempUnschedulableRule, modelKey string, statusCode int, responseBody []byte) bool {
+	if statusCode == http.StatusUnauthorized && unauthorizedRequiresCredentialHandling(account, responseBody) {
 		return false
 	}
-	return rule.Scope != TempUnschedScopeAccount
+	return tempUnschedRuleUsesModelScope(rule, modelKey, statusCode)
+}
+
+// unauthorizedRequiresCredentialHandling 识别凭据级 401：OAuth 账号与 Spark 影子
+// （失效缓存、刷新窗口、缺 refresh_token 停用），以及 OpenAI 明确的凭据失效
+// （token_invalidated / token_revoked、{"detail":"Unauthorized"}）。
+func unauthorizedRequiresCredentialHandling(account *Account, responseBody []byte) bool {
+	if account == nil {
+		return false
+	}
+	if account.Type == AccountTypeOAuth || account.IsShadow() {
+		return true
+	}
+	if account.Platform != PlatformOpenAI {
+		return false
+	}
+	switch extractUpstreamErrorCode(responseBody) {
+	case "token_invalidated", "token_revoked":
+		return true
+	}
+	return gjson.GetBytes(responseBody, "detail").String() == "Unauthorized"
+}
+
+// tempUnschedRuleUsesModelScope 决定一次命中按模型级冷却还是账号级暂停。
+// 显式 scope 完全由规则决定；scope 为空时模型已知且非 401 走模型级。
+// 模型未知时无法隔离，一律账号级。
+func tempUnschedRuleUsesModelScope(rule TempUnschedulableRule, modelKey string, statusCode int) bool {
+	if strings.TrimSpace(modelKey) == "" {
+		return false
+	}
+	switch rule.Scope {
+	case TempUnschedScopeAccount:
+		return false
+	case TempUnschedScopeModel:
+		return true
+	default:
+		return statusCode != http.StatusUnauthorized
+	}
 }
 
 type tempUnschedulableModelContextKey struct{}
@@ -2790,10 +2838,17 @@ func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Ac
 	if !account.IsTempUnschedulableEnabled() {
 		return false
 	}
+	matches := matchTempUnschedulableRules(account, statusCode, responseBody)
+	if len(matches) == 0 {
+		return false
+	}
+	modelKey := tempUnschedulableModel(ctx, requestedModel)
 	// 401 首次命中可临时不可调度（给 token 刷新窗口）；
 	// 若历史上已因 401 进入过临时不可调度，则本次应升级为 error（返回 false 交由默认错误逻辑处理）。
 	// Antigravity 跳过：其 401 由 applyErrorPolicy 的 temp_unschedulable_rules 自行控制，无需升级逻辑。
-	if statusCode == http.StatusUnauthorized && account.Platform != PlatformAntigravity {
+	// 模型级命中只冷却模型、不写账号级状态，不参与升级。
+	if statusCode == http.StatusUnauthorized && account.Platform != PlatformAntigravity &&
+		!tempUnschedHitUsesModelScope(account, matches[0].rule, modelKey, statusCode, responseBody) {
 		reason := account.TempUnschedulableReason
 		// 缓存可能没有 reason，从 DB 回退读取
 		if reason == "" {
@@ -2807,8 +2862,8 @@ func (s *RateLimitService) tryTempUnschedulable(ctx context.Context, account *Ac
 			return false
 		}
 	}
-	for _, match := range matchTempUnschedulableRules(account, statusCode, responseBody) {
-		if s.triggerTempUnschedulable(ctx, account, match.rule, match.ruleIndex, statusCode, match.matchedKeyword, responseBody, tempUnschedulableModel(ctx, requestedModel)) {
+	for _, match := range matches {
+		if s.triggerTempUnschedulable(ctx, account, match.rule, match.ruleIndex, statusCode, match.matchedKeyword, responseBody, modelKey) {
 			return true
 		}
 	}
@@ -2859,7 +2914,7 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 	now := time.Now()
 	until := now.Add(time.Duration(rule.DurationMinutes) * time.Minute)
 	modelKey := firstRequestedModel(requestedModel)
-	modelScoped := tempUnschedRuleUsesModelScope(rule, modelKey, statusCode)
+	modelScoped := tempUnschedHitUsesModelScope(account, rule, modelKey, statusCode, responseBody)
 
 	state := &TempUnschedState{
 		UntilUnix:       until.Unix(),

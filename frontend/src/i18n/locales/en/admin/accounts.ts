@@ -436,7 +436,7 @@ export default {
         scopeModelDesc: 'Cool down only the requested model',
         scopeAccount: 'Account',
         scopeAccountDesc: 'Pause scheduling for the whole account',
-        scopeHint: '401 rules, and hits where the request model cannot be identified, always use account scope.',
+        scopeHint: 'Model-scoped rules fall back to account scope when the request model cannot be identified.',
         description: 'Description',
         descriptionPlaceholder: 'Optional note for this rule',
         rulesInvalid: 'Add at least one rule with error code, keywords, and duration.',
