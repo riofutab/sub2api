@@ -2113,17 +2113,31 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		slog.Info("account_session_window_initialized", "account_id", account.ID, "window_start", start, "window_end", end, "status", status)
 	}
 
-	// 窗口重置时清除旧的 utilization 和被动采样数据，避免残留上个窗口的数据
-	windowReset := windowEnd != nil && needInitWindow
-	if windowReset {
-		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
-			"session_window_utilization":      nil,
-			"passive_usage_7d_utilization":    nil,
-			"passive_usage_7d_reset":          nil,
-			"passive_usage_7d_oi_utilization": nil,
-			"passive_usage_7d_oi_reset":       nil,
-			"passive_usage_sampled_at":        nil,
-		})
+	// 5h 换窗清理自己的旧用量；周额度按各自的重置时间判断：未到期的保留，
+	// 已到期的随时清除（包括 5h 窗口中途），没有可用重置时间的只在换窗时清除。
+	rollover := windowEnd != nil && needInitWindow
+	updates := map[string]any{}
+	if rollover {
+		updates["session_window_utilization"] = nil
+		updates["passive_usage_sampled_at"] = nil
+	}
+	now := time.Now()
+	for _, window := range [...]struct{ utilizationKey, resetKey string }{
+		{"passive_usage_7d_utilization", "passive_usage_7d_reset"},
+		{"passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset"},
+	} {
+		resetAt := parseSchedulingResetAt(account.Extra[window.resetKey])
+		if resetAt != nil && resetAt.After(now) {
+			continue
+		}
+		if resetAt == nil && !rollover {
+			continue
+		}
+		updates[window.utilizationKey] = nil
+		updates[window.resetKey] = nil
+	}
+	if len(updates) > 0 {
+		_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 	}
 
 	// 状态与窗口都没变时这次 UPDATE 是空操作，跳过；变化必须立即落库。
@@ -2640,19 +2654,8 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false
 	}
-	if !account.ShouldHandleErrorCode(statusCode) {
-		return false
-	}
-	var cooldown time.Duration
-	var reason string
-	switch {
-	case isUpstreamModelNotFoundError(statusCode, responseBody):
-		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
-	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
-		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
-	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
-		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
-	default:
+	cooldown, reason, ok := upstreamModelUnavailableCooldown(account, statusCode, responseBody)
+	if !ok {
 		return false
 	}
 	modelKey := modelRateLimitKeyForUpstreamModelNotFound(ctx, account, requestedModel)
@@ -2669,6 +2672,26 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	}
 	slog.Info("upstream_model_not_found_model_rate_limited", "account_id", account.ID, "model", modelKey, "reason", reason, "reset_at", resetAt)
 	return true
+}
+
+// upstreamModelUnavailableCooldown classifies the deterministic upstream
+// refusals HandleUpstreamModelNotFound cools down per (account, model): the
+// account cannot serve the requested model, which says nothing about how it
+// serves other models.
+func upstreamModelUnavailableCooldown(account *Account, statusCode int, responseBody []byte) (time.Duration, string, bool) {
+	if account == nil || !account.ShouldHandleErrorCode(statusCode) {
+		return 0, "", false
+	}
+	switch {
+	case isUpstreamModelNotFoundError(statusCode, responseBody):
+		return upstreamModelNotFoundCooldown, upstreamModelNotFoundReason, true
+	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
+		return upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason, true
+	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
+		return upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason, true
+	default:
+		return 0, "", false
+	}
 }
 
 // shouldSkipCodexPlanGatedImageModelCooldown 判断这次 Codex plan-gated 400 是否
