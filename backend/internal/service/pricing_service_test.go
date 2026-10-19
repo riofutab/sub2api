@@ -1278,3 +1278,42 @@ func TestCalculateCost_ClaudeSonnetCatalogLadderIsDataDriven(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, cost.LongContextBillingApplied, "恰好 200000 不进高档（严格大于）")
 }
+
+// Antigravity 的 Claude 5.5 思考档位 ID 只决定推理深度，必须按基础型号计价，
+// 不能落入子串家族匹配（opus-5-5-high → claude-opus-5、sonnet-5-5-high → sonnet-4-5）。
+func TestPricingService_AntigravityClaude55TiersUseBaseModelPricing(t *testing.T) {
+	opus := &LiteLLMModelPricing{InputCostPerToken: 4e-6, OutputCostPerToken: 20e-6}
+	sonnet := &LiteLLMModelPricing{InputCostPerToken: 2e-6, OutputCostPerToken: 10e-6}
+	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"claude-opus-5-5":   opus,
+		"claude-sonnet-5-5": sonnet,
+		"claude-opus-5":     {InputCostPerToken: 5e-6, OutputCostPerToken: 25e-6},
+		"claude-sonnet-4-5": {InputCostPerToken: 3e-6, OutputCostPerToken: 15e-6},
+	}}
+	for _, tier := range []string{"high", "medium", "low"} {
+		require.Same(t, opus, svc.GetModelPricing("claude-opus-5-5-"+tier))
+		require.Same(t, sonnet, svc.GetModelPricing("claude-sonnet-5-5-"+tier))
+	}
+
+	// 价格目录缺基础型号时走家族兜底，同样不能落到 claude-opus-5 / sonnet-4-5。
+	sparse := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
+		"claude-opus-5":     {InputCostPerToken: 5e-6, OutputCostPerToken: 25e-6},
+		"claude-sonnet-4-5": {InputCostPerToken: 3e-6, OutputCostPerToken: 15e-6},
+	}}
+	require.Same(t, claudeOpus55FallbackPricing, sparse.GetModelPricing("claude-opus-5-5-high"))
+	require.Same(t, claudeSonnet55FallbackPricing, sparse.GetModelPricing("claude-sonnet-5-5-low"))
+}
+
+func TestBillingService_AntigravityClaude55TierFallbacksUseBaseRates(t *testing.T) {
+	svc := NewBillingService(&config.Config{}, nil)
+	tokens := UsageTokens{InputTokens: 1_000_000, OutputTokens: 1_000_000}
+	for _, tier := range []string{"high", "medium", "low"} {
+		for base, want := range map[string]string{"claude-opus-5-5": "claude-opus-5-5", "claude-sonnet-5-5": "claude-sonnet-5-5"} {
+			got, err := svc.CalculateCost(base+"-"+tier, tokens, 1)
+			require.NoError(t, err)
+			ref, err := svc.CalculateCost(want, tokens, 1)
+			require.NoError(t, err)
+			require.InDelta(t, ref.TotalCost, got.TotalCost, 1e-12, base+"-"+tier)
+		}
+	}
+}

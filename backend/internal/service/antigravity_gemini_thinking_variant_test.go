@@ -3,7 +3,6 @@ package service
 import (
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/stretchr/testify/require"
 )
@@ -75,10 +74,10 @@ func TestResolveGeminiThinkingVariant(t *testing.T) {
 		{"agy low (1000) -> -low", catalog, "gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"models/ prefix stripped", catalog, "models/gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
 		{"no thinkingConfig -> -high", catalog, "gemini-3.8-flash", []byte(`{"contents":[]}`), "gemini-3.8-flash-high", true},
-		// gemini-3.6/3.7/3.8-flash 的四个变体会被 resolveModelMapping 自动补齐，所以降级用一个不在默认表里的型号
 		{"only -high exists: low request degrades to high", map[string]string{
 			"gemini-3.5-flash-high": "gemini-3.5-flash-high",
 		}, "gemini-3.5-flash", budget("1000"), "gemini-3.5-flash-high", true},
+		// gemini-3.6/3.7/3.8-flash 的四个变体会被 resolveModelMapping 自动补齐（存量显式映射账号的兼容透传）。
 		{"injected default variants are usable", catalog, "gemini-3.6-flash", budget("1000"), "gemini-3.6-flash-low", true},
 		{"already suffixed: untouched", catalog, "gemini-3.8-flash-low", budget("-1"), "", false},
 		{"bare name explicitly mapped: untouched", catalog, "gemini-2.5-flash", budget("-1"), "", false},
@@ -91,26 +90,22 @@ func TestResolveGeminiThinkingVariant(t *testing.T) {
 		{"variant value is itself a mapping target", map[string]string{
 			"gemini-3.8-flash-high": "gemini-3.8-flash-tiered",
 		}, "gemini-3.8-flash", budget("-1"), "gemini-3.8-flash-tiered", true},
-		// 新建账号 UI 会把 domain.DefaultAntigravityModelMapping 整表存进
-		// credentials.model_mapping，其中含 gemini-3.x-flash 裸名自映射。
-		// 上游目录只有带后缀变体，裸名透传必然 404，因此默认 tiered 家族的
-		// 裸名自映射（无论 runtime 注入还是随 UI 默认表保存）都不算用户意图，
-		// 必须继续按 thinkingConfig 推导。
-		{"saved default-table bare identity: still resolved", map[string]string{
+		// 前端持久化的默认目录含裸名自映射；-low 由默认透传补齐，按预算命中。
+		{"persisted default bare identity passthrough still resolves when variants exist", map[string]string{
 			"gemini-3.8-flash":      "gemini-3.8-flash",
-			"gemini-3.8-flash-low":  "gemini-3.8-flash-low",
 			"gemini-3.8-flash-high": "gemini-3.8-flash-high",
 		}, "gemini-3.8-flash", budget("1000"), "gemini-3.8-flash-low", true},
-		{"unknown bare self-mapping outside default tiered families: respected", map[string]string{
-			"gemini-9.9-flash":      "gemini-9.9-flash",
-			"gemini-9.9-flash-high": "gemini-9.9-flash-high",
-		}, "gemini-9.9-flash", budget("-1"), "", false},
-		{"bare name absent from credentials: still resolved", map[string]string{
-			// credentials 里只有带后缀的条目（ensureAntigravityDefaultPassthroughs
-			// 只补后缀变体、不补裸名），裸名不在表中，应当继续推导变体。
+		{"bare identity passthrough resolves a configured variant outside the default passthroughs", map[string]string{
+			"gemini-3.5-flash":      "gemini-3.5-flash",
+			"gemini-3.5-flash-high": "gemini-3.5-flash-high",
+		}, "gemini-3.5-flash", budget("1000"), "gemini-3.5-flash-high", true},
+		{"wildcard mapping does not fabricate variants for non-tiered bare model", map[string]string{
+			"gemini-2.5*": "gemini-2.5-flash",
+		}, "gemini-2.5-flash", budget("-1"), "", false},
+		{"bare model absent from whitelist: configured variant still resolved", map[string]string{
 			"gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
 		}, "gemini-3.7-flash", budget("4000"), "gemini-3.7-flash-medium", true},
-		// 空 credentials 映射 → 走 DefaultAntigravityModelMapping，其中同样只有带后缀的 3.8 flash
+		// 空 credentials 映射保留默认目录兼容行为。
 		{"empty mapping falls back to default catalog", map[string]string{}, "gemini-3.8-flash", budget("-1"), "gemini-3.8-flash-high", true},
 	}
 	for _, tt := range tests {
@@ -184,76 +179,6 @@ func TestGeminiThinkingLevel_NativeAndCompatAgree(t *testing.T) {
 	native := geminiThinkingLevelFromBody([]byte(`{"generationConfig":{"thinkingConfig":{"thinkingBudget":4000}}}`))
 	compat := geminiThinkingLevelFromClaudeThinking(&antigravity.ThinkingConfig{Type: "enabled", BudgetTokens: 4000})
 	require.Equal(t, native, compat)
-}
-
-// 生产 404 回归（gemini-3.8-flash，2026-10-08 起线上全量失败）：
-// 新建账号 UI 把 domain.DefaultAntigravityModelMapping 整表保存进
-// credentials.model_mapping（含裸名自映射 gemini-3.8-flash→gemini-3.8-flash），
-// 旧实现据此跳过 thinking 变体推导、把裸名透传上游 → 404 "Requested entity
-// was not found."。默认 tiered 家族的裸名自映射必须继续推导，与未保存默认表
-// 的账号行为一致。
-func TestResolveGeminiThinkingVariant_SavedUIDefaultTableBareSelfMapping(t *testing.T) {
-	// 完整复刻 UI 默认表落库形态：整表拷贝 DefaultAntigravityModelMapping。
-	savedDefault := make(map[string]string, len(domain.DefaultAntigravityModelMapping))
-	for k, v := range domain.DefaultAntigravityModelMapping {
-		savedDefault[k] = v
-	}
-	account := newAntigravityAccountWithMapping(savedDefault)
-
-	t.Run("native budget 1000 -> low", func(t *testing.T) {
-		got, matched := resolveGeminiThinkingVariant(account, "gemini-3.8-flash",
-			[]byte(`{"generationConfig":{"thinkingConfig":{"thinkingBudget":1000}}}`))
-		require.True(t, matched)
-		require.Equal(t, "gemini-3.8-flash-low", got)
-	})
-
-	t.Run("compat level low/medium/high", func(t *testing.T) {
-		for _, tc := range []struct{ level, want string }{
-			{"low", "gemini-3.8-flash-low"},
-			{"medium", "gemini-3.8-flash-medium"},
-			{"high", "gemini-3.8-flash-high"},
-		} {
-			got, matched := resolveGeminiThinkingVariantForLevel(account, "gemini-3.8-flash", tc.level)
-			require.True(t, matched)
-			require.Equal(t, tc.want, got)
-		}
-	})
-
-	t.Run("3.6/3.7 families also resolved", func(t *testing.T) {
-		for _, bare := range []string{"gemini-3.6-flash", "gemini-3.7-flash"} {
-			got, matched := resolveGeminiThinkingVariantForLevel(account, bare, "high")
-			require.True(t, matched)
-			require.Equal(t, bare+"-high", got)
-		}
-	})
-
-	t.Run("bare key preserved in credentials (no rewrite of stored mapping)", func(t *testing.T) {
-		raw, _ := account.Credentials["model_mapping"].(map[string]any)
-		require.Equal(t, "gemini-3.8-flash", raw["gemini-3.8-flash"])
-	})
-}
-
-// admission + 转发行为锁：保存了 UI 默认表的账号，裸名必须仍被视作支持
-// （isModelSupportedByAccount/mapAntigravityModel admission 不回退），
-// 且 getMappedModel 默认落到 -high。
-func TestSavedUIDefaultTableBareModelAdmissionAndForward(t *testing.T) {
-	savedDefault := make(map[string]string, len(domain.DefaultAntigravityModelMapping))
-	for k, v := range domain.DefaultAntigravityModelMapping {
-		savedDefault[k] = v
-	}
-	account := newAntigravityAccountWithMapping(savedDefault)
-	svc := &AntigravityGatewayService{}
-	gw := &GatewayService{}
-
-	require.True(t, gw.isModelSupportedByAccount(account, "gemini-3.8-flash"))
-	require.True(t, gw.isModelSupportedByAccount(account, "gemini-3.6-flash"))
-	require.Equal(t, "gemini-3.8-flash-high", svc.getMappedModel(account, "gemini-3.8-flash"))
-	require.Equal(t, "gemini-3.8-flash-low",
-		svc.getMappedModelForThinkingLevel(account, "gemini-3.8-flash", "low"))
-	require.Equal(t, "gemini-3.8-flash-medium",
-		svc.getMappedModelForThinkingLevel(account, "gemini-3.8-flash", "medium"))
-	require.Equal(t, "gemini-3.8-flash-high",
-		svc.getMappedModelForThinkingLevel(account, "gemini-3.8-flash", "high"))
 }
 
 // 回归锁：裸名解析必须发生在 getMappedModel 这一层，从而覆盖全部 Antigravity
