@@ -21,6 +21,9 @@ type ModelAvailabilityDiagnosis struct {
 	// HasModelSupport is true if at least one account's model mapping admits
 	// the requested model.
 	HasModelSupport bool
+	// HasRetiredSubscriptionModel records a ChatGPT upstream blocked by model
+	// retirement, so an unsupported request can include migration guidance.
+	HasRetiredSubscriptionModel bool
 }
 
 // ModelAvailability is the current, side-effect-free schedulability of one

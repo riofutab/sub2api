@@ -497,7 +497,6 @@ const DummyThoughtSignature = "skip_thought_signature_validator"
 // allowDummyThought: 只有 Gemini 模型支持 dummy thought signature
 func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDummyThought bool) ([]GeminiPart, bool, error) {
 	var parts []GeminiPart
-	var toolResultMedia []GeminiPart
 	strippedThinking := false
 
 	// 尝试解析为字符串
@@ -589,7 +588,6 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 
 			// Parse content
 			resultContent := parseToolResultContent(block.Content, block.IsError)
-			toolResultMedia = append(toolResultMedia, toolResultMediaParts(block.Content)...)
 
 			if funcName == "" {
 				// When client trims history in multi-turn sessions, the corresponding tool_use block is absent,
@@ -612,30 +610,11 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 					ID: block.ToolUseID,
 				},
 			})
+			parts = append(parts, extractToolResultInlineParts(block.Content)...)
 		}
 	}
-
-	// tool_result 里的图片/文档放在函数响应之后（functionResponse 部分保持连续）。
-	parts = append(parts, toolResultMedia...)
 
 	return parts, strippedThinking, nil
-}
-
-// toolResultMediaParts 提取 tool_result content 数组里的 base64 图片/文档。
-// parseToolResultContent 只保留文本，不处理这里的内容会让模型看不到工具返回的图片。
-func toolResultMediaParts(content json.RawMessage) []GeminiPart {
-	var blocks []ContentBlock
-	if err := json.Unmarshal(content, &blocks); err != nil {
-		return nil
-	}
-	var parts []GeminiPart
-	for _, b := range blocks {
-		if (b.Type == "image" || b.Type == "document") && b.Source != nil &&
-			b.Source.Type == "base64" && strings.TrimSpace(b.Source.Data) != "" {
-			parts = append(parts, GeminiPart{InlineData: &GeminiInlineData{MimeType: b.Source.MediaType, Data: b.Source.Data}})
-		}
-	}
-	return parts
 }
 
 // parseToolResultContent 解析 tool_result 的 content
@@ -680,6 +659,31 @@ func parseToolResultContent(content json.RawMessage, isError bool) string {
 
 	// 返回原始 JSON
 	return string(content)
+}
+
+func extractToolResultInlineParts(content json.RawMessage) []GeminiPart {
+	if len(content) == 0 {
+		return nil
+	}
+	var innerBlocks []ContentBlock
+	if err := json.Unmarshal(content, &innerBlocks); err != nil {
+		return nil
+	}
+	var inlineParts []GeminiPart
+	for _, item := range innerBlocks {
+		if (item.Type == "image" || item.Type == "document") &&
+			item.Source != nil &&
+			item.Source.Type == "base64" &&
+			strings.TrimSpace(item.Source.Data) != "" {
+			inlineParts = append(inlineParts, GeminiPart{
+				InlineData: &GeminiInlineData{
+					MimeType: item.Source.MediaType,
+					Data:     item.Source.Data,
+				},
+			})
+		}
+	}
+	return inlineParts
 }
 
 // buildGenerationConfig 构建 generationConfig
