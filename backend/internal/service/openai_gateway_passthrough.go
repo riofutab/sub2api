@@ -241,7 +241,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 
+	// Explicit passthrough is for native Responses upstreams: keep custom tools,
+	// their grammar and history intact. Automatic API-key routing still uses the
+	// compatibility adapter when passthrough has not been explicitly enabled.
 	if account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeAPIKey &&
+		!account.IsOpenAIPassthroughEnabled() &&
 		!isOpenAIResponsesCompactPath(c) && needsOpenAIResponsesClientToolAdaptation(body) {
 		adaptedBody, mapping, adaptErr := adaptOpenAIResponsesClientTools(body)
 		if adaptErr != nil {
@@ -1104,7 +1108,9 @@ func openAIStreamClientOutputStarted(c *gin.Context, localStarted bool) bool {
 // Lifecycle metadata and transport heartbeats are not model output.
 func openAIStreamEventIsMetadata(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "response.created", "response.in_progress", "keepalive":
+	// Queuing and moderation metadata do not commit model output or disarm the
+	// first-output timeout; a following overload must remain safe to retry.
+	case "response.created", "response.queued", "response.in_progress", "response.metadata", "keepalive":
 		return true
 	default:
 		return false
@@ -1599,6 +1605,12 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if errType == "" {
 		errType = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.type").String()))
 	}
+	// invalid_encrypted_content is request/context-bound, not an account
+	// capability failure. Once the one sanitization retry is exhausted, keep
+	// the upstream terminal event instead of rotating accounts and replaying it.
+	if code == "invalid_encrypted_content" {
+		return false
+	}
 	combined := strings.ToLower(strings.TrimSpace(message + " " + code + " " + errType))
 	if combined == "" {
 		return true
@@ -1625,6 +1637,11 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 		return false
 	}
 	if isOpenAIContextWindowError(message, payload) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "code").String()), "invalid_encrypted_content") ||
+		strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "error.code").String()), "invalid_encrypted_content") ||
+		strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()), "invalid_encrypted_content") {
 		return false
 	}
 	if isOpenAIShortInputPolicyError(http.StatusBadRequest, payload) {
