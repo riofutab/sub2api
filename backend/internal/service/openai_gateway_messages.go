@@ -133,7 +133,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 3. Convert the complete Anthropic history to Responses.
 	anthropicReq.Model = upstreamModel
-	responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+	responsesReq, err := anthropicToResponses(s.cfg, &anthropicReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic to responses: %w", err)
 	}
