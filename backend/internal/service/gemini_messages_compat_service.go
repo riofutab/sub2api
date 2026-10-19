@@ -45,8 +45,8 @@ const (
 	geminiRetryInfoTypeURL = "type.googleapis.com/google.rpc.RetryInfo"
 	// RetryInfo.retryDelay 的上限，防止异常值导致账号长时间不可用
 	geminiRetryInfoMaxDelay = 15 * time.Minute
-	// Vertex（service_account，按量付费）429 无法解析重置时间时的兜底冷却：
-	// 按量付费限速是短窗口 RPM/TPM，没有每日配额，不适用 PST 午夜重置
+	// Vertex（service_account）账号自身的 429（按量付费的项目配额、预留吞吐超额等）无法解析重置时间时的兜底冷却：
+	// 这类限速是短窗口 RPM/TPM，没有每日配额，不适用 PST 午夜重置；共享容量不足的 429 不冷却
 	geminiVertexFallbackCooldown = time.Minute
 )
 
@@ -820,7 +820,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				break
 			}
 			if resp.StatusCode == 429 {
-				// Mark as rate-limited early so concurrent requests avoid this account.
+				// Apply account-scoped 429 handling early so concurrent requests avoid a rate-limited account.
 				s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 			}
 			if attempt < geminiMaxRetries {
@@ -3039,7 +3039,13 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 				logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Google One OAuth, tier=%s, project=%s) rate limited, cooldown=%v", account.ID, tierID, projectID, time.Until(ra).Truncate(time.Second))
 			}
 		} else if account.IsVertexServiceAccount() {
-			// Vertex 按量付费：短窗限速，无每日配额，短冷却后即可恢复
+			// 共享容量不足描述的是请求当时的上游容量，不是账号额度：账号保持可调度，
+			// 由请求内的同号退避重试与换号消化。
+			if isVertexSharedCapacity429(body) {
+				logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Vertex service account, project=%s) shared capacity exhausted, account stays schedulable", account.ID, projectID)
+				return
+			}
+			// 项目配额、预留吞吐等账号自身的限速是短窗口 RPM/TPM，无每日配额，短冷却后即可恢复
 			ra = time.Now().Add(geminiVertexFallbackCooldown)
 			logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d (Vertex service account, project=%s) rate limited, cooldown=%v", account.ID, projectID, time.Until(ra).Truncate(time.Second))
 		} else {
@@ -3062,6 +3068,30 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	_ = s.accountRepo.SetRateLimited(ctx, account.ID, resetTime)
 	logger.LegacyPrintf("service.gemini_messages_compat", "[Gemini 429] Account %d rate limited until %v (oauth_type=%s, tier=%s)",
 		account.ID, resetTime, oauthType, tierID)
+}
+
+// isVertexSharedCapacity429 判断 Vertex 429 是否为按量付费共享容量不足：RESOURCE_EXHAUSTED、
+// 不带任何错误明细（RetryInfo / QuotaFailure / ErrorInfo），文案为 "Resource exhausted ... try again later"
+// 且不涉及项目配额或预留吞吐。其他形态的 429 按账号自身限速处理。
+func isVertexSharedCapacity429(body []byte) bool {
+	errObj := gjson.GetBytes(body, "error")
+	if !errObj.Exists() {
+		errObj = gjson.GetBytes(body, "0.error")
+	}
+	if !errObj.IsObject() {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(errObj.Get("status").String()), "RESOURCE_EXHAUSTED") {
+		return false
+	}
+	if len(errObj.Get("details").Array()) > 0 {
+		return false
+	}
+	msg := strings.ToLower(errObj.Get("message").String())
+	if !strings.Contains(msg, "resource exhausted") || !strings.Contains(msg, "try again later") {
+		return false
+	}
+	return !strings.Contains(msg, "quota") && !strings.Contains(msg, "provisioned throughput")
 }
 
 // handleGeminiThirdParty429 处理第三方上游的 429：不套用 AI Studio 每日配额语义，
