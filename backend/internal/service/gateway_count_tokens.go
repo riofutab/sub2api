@@ -22,6 +22,13 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		s.countTokensError(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return fmt.Errorf("parse request: empty request")
 	}
+	// Antigravity 账户不支持 count_tokens，返回 404 让客户端 fallback 到本地估算。
+	// 返回 nil 避免 handler 层记录为错误，也不设置 ops 上游错误上下文。
+	// 凭据只能走其他协议的 OAuth 账号同理，且必须在取 token、建请求之前拦下。
+	if account != nil && (account.Platform == PlatformAntigravity || !anthropicMessagesCredentialAllowed(account)) {
+		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for this platform")
+		return nil
+	}
 
 	validationModel := parsed.Model
 	if account != nil {
@@ -103,13 +110,6 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		if err := replaceBody(enforceCacheControlLimit(body)); err != nil {
 			return err
 		}
-	}
-
-	// Antigravity 账户不支持 count_tokens，返回 404 让客户端 fallback 到本地估算。
-	// 返回 nil 避免 handler 层记录为错误，也不设置 ops 上游错误上下文。
-	if account.Platform == PlatformAntigravity {
-		s.countTokensError(c, http.StatusNotFound, "not_found_error", "count_tokens endpoint is not supported for this platform")
-		return nil
 	}
 
 	// 应用模型映射：
