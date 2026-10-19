@@ -72,7 +72,7 @@ func (s *customToolInputStream) delta(arguments string) string {
 				s.stopped = true
 				break
 			}
-			out.WriteString(decoded)
+			_, _ = out.WriteString(decoded)
 			s.offset += n
 		default:
 			if rest[0] < 0x20 {
@@ -83,7 +83,7 @@ func (s *customToolInputStream) delta(arguments string) string {
 				return s.record(out.String())
 			}
 			r, n := utf8.DecodeRuneInString(rest)
-			out.WriteRune(r)
+			_, _ = out.WriteRune(r)
 			s.offset += n
 		}
 		if s.stopped {
@@ -94,7 +94,7 @@ func (s *customToolInputStream) delta(arguments string) string {
 }
 
 func (s *customToolInputStream) record(delta string) string {
-	s.emitted.WriteString(delta)
+	_, _ = s.emitted.WriteString(delta)
 	return delta
 }
 

@@ -34,7 +34,7 @@ func TestCustomToolInputStreamEverySplit(t *testing.T) {
 			for i := 1; i <= len(arguments); i++ {
 				delta := stream.delta(arguments[:i])
 				require.True(t, utf8.ValidString(delta))
-				got.WriteString(delta)
+				_, _ = got.WriteString(delta)
 			}
 			require.Equal(t, want, got.String())
 		})
@@ -97,9 +97,9 @@ func FuzzCustomToolInputStream(f *testing.F) {
 		var got strings.Builder
 		step := int(chunk) + 1
 		for i := step; i < len(arguments); i += step {
-			got.WriteString(stream.delta(string(arguments[:i])))
+			_, _ = got.WriteString(stream.delta(string(arguments[:i])))
 		}
-		got.WriteString(stream.delta(string(arguments)))
+		_, _ = got.WriteString(stream.delta(string(arguments)))
 		require.Equal(t, extractCustomToolCallInput(string(arguments)), got.String())
 	})
 }

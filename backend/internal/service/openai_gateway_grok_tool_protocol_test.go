@@ -396,7 +396,7 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	var customInput strings.Builder
 	for _, frame := range frames {
 		if frame.event == "response.custom_tool_call_input.delta" {
-			customInput.WriteString(gjson.GetBytes(frame.data, "delta").String())
+			_, _ = customInput.WriteString(gjson.GetBytes(frame.data, "delta").String())
 		}
 	}
 	require.Equal(t, "*** Begin Patch", customInput.String())

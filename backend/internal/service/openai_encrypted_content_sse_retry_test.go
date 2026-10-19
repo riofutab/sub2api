@@ -105,7 +105,8 @@ func TestForwardEncryptedContentSSERetry(t *testing.T) {
 				require.NotContains(t, string(upstream.bodies[1]), `"role":"developer"`)
 				raw, ok := c.Get(OpsUpstreamErrorsKey)
 				require.True(t, ok)
-				events := raw.([]*OpsUpstreamErrorEvent)
+				events, isEvents := raw.([]*OpsUpstreamErrorEvent)
+				require.True(t, isEvents)
 				require.Equal(t, "retry", events[0].Kind)
 				require.Equal(t, "invalid_encrypted_content", events[0].Reason)
 				if tt.managed {
