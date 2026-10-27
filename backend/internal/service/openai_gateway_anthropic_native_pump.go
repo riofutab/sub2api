@@ -98,10 +98,13 @@ func (p *anthropicNativeLinePump) nextOrClientGone(clientGone <-chan struct{}) (
 	case <-timeoutCh:
 		select {
 		case ev, ok := <-p.events:
-			return p.deliver(ev, ok)
+			// 计时器已触发且已被取走；心跳行不会重置它，交付心跳会让超时永远丢失。
+			if !ok || ev.err != nil || !anthropicSSELineIsHeartbeat(ev.line) {
+				return p.deliver(ev, ok)
+			}
 		default:
-			return "", errAnthropicNativeStreamIdle
 		}
+		return "", errAnthropicNativeStreamIdle
 	case <-clientGone:
 		return "", errAnthropicNativeClientGone
 	}
