@@ -2603,9 +2603,9 @@ func supportsOpenAIReasoningEffortMax(model string) bool {
 	}
 }
 
-// validateGPT61SolCompatRequest runs after model mapping, before conversion can
+// validateGPT61CompatRequest runs after model mapping, before conversion can
 // discard unsupported explicit effort selections or disabled thinking.
-func hasEffectiveGPT61SolCompatEffort(body []byte) bool {
+func hasEffectiveGPT61CompatEffort(body []byte) bool {
 	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
 		effort := gjson.GetBytes(body, path)
 		if effort.Type == gjson.String && strings.TrimSpace(effort.String()) != "" {
@@ -2616,28 +2616,29 @@ func hasEffectiveGPT61SolCompatEffort(body []byte) bool {
 	return outputEffort.Type == gjson.String && outputEffort.String() != ""
 }
 
-func validateGPT61SolCompatRequest(body []byte, model string) error {
-	if !openai.IsGPT61SolModelSpelling(model) {
+func validateGPT61CompatRequest(body []byte, model string) error {
+	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) {
 		return nil
 	}
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
-		if err := openai.ValidateGPT61SolReasoningEffort(model, gjson.GetBytes(body, path).String()); err != nil {
+		if err := openai.ValidateGPT61ReasoningEffort(model, gjson.GetBytes(body, path).String()); err != nil {
 			return err
 		}
 	}
 	if gjson.GetBytes(body, "thinking.type").String() == "disabled" {
-		return openai.ValidateGPT61SolReasoningEffort(model, "none")
+		return openai.ValidateGPT61ReasoningEffort(model, "none")
 	}
-	// Only a canonical GPT-6.1 Sol effort alias can supply an implicit effort.
+	// Only a canonical GPT-6.1 effort alias can supply an implicit effort.
 	// Arbitrary client aliases (for example "public-none") may map to this
 	// upstream model and must not be parsed as model-effort syntax.
 	// Match the normalization gates: null/empty reasoning fields do not override;
 	// output_config whitespace is non-empty and does suppress the alias suffix.
-	if !hasEffectiveGPT61SolCompatEffort(body) {
+	if !hasEffectiveGPT61CompatEffort(body) {
 		requestedModel := openai.CanonicalizeOpenAIModelAliasSpelling(gjson.GetBytes(body, "model").String())
-		if openai.IsGPT61SolModelSpelling(requestedModel) {
-			if effort, ok := strings.CutPrefix(requestedModel, "gpt-6.1-sol-"); ok && effort != "openai-compact" {
-				return openai.ValidateGPT61SolReasoningEffort(model, effort)
+		for _, prefix := range []string{"gpt-6.1-sol-", "gpt-6.1-terra-"} {
+			if effort, ok := strings.CutPrefix(requestedModel, prefix); ok && effort != "openai-compact" &&
+				(openai.IsGPT61SolModelSpelling(requestedModel) || openai.IsGPT61TerraModelSpelling(requestedModel)) {
+				return openai.ValidateGPT61ReasoningEffort(model, effort)
 			}
 		}
 	}

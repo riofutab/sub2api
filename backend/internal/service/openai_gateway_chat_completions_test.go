@@ -1902,15 +1902,15 @@ func TestGPT61SolValidatorAliasInteractions(t *testing.T) {
 		`{"model":"public-minimal"}`,
 		`{"model":"public-none","reasoning_effort":"high"}`,
 	} {
-		require.NoError(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6.1-sol"), body)
+		require.NoError(t, validateGPT61CompatRequest([]byte(body), "gpt-6.1-sol"), body)
 	}
 	for _, body := range []string{
 		`{"model":"gpt-6.1-sol-none"}`,
 		`{"model":"openai/GPT-6.1-SOL-minimal"}`,
 	} {
-		require.Error(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6.1-sol"), body)
+		require.Error(t, validateGPT61CompatRequest([]byte(body), "gpt-6.1-sol"), body)
 	}
-	require.Error(t, validateGPT61SolCompatRequest([]byte(`{"model":"gpt-6.1-sol-none","reasoning_effort":"high","output_config":{"effort":"none"}}`), "gpt-6.1-sol"))
+	require.Error(t, validateGPT61CompatRequest([]byte(`{"model":"gpt-6.1-sol-none","reasoning_effort":"high","output_config":{"effort":"none"}}`), "gpt-6.1-sol"))
 }
 
 func TestGPT61SolRejectsDisabledReasoningBeforeForwarding(t *testing.T) {
@@ -1921,8 +1921,8 @@ func TestGPT61SolRejectsDisabledReasoningBeforeForwarding(t *testing.T) {
 		`{"model":"public","thinking":{"type":"disabled"}}`,
 		`{"model":"gpt-6.1-sol-minimal"}`,
 	} {
-		require.Error(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6.1-sol"))
-		require.NoError(t, validateGPT61SolCompatRequest([]byte(body), "gpt-6-sol"))
+		require.Error(t, validateGPT61CompatRequest([]byte(body), "gpt-6.1-sol"))
+		require.NoError(t, validateGPT61CompatRequest([]byte(body), "gpt-6-sol"))
 	}
 	for _, field := range []string{`"reasoning_effort":"none"`, `"reasoning_effort":"minimal"`, `"tools":[{"type":"function","function":{"name":"lookup"}}]`} {
 		body := []byte(`{"model":"public",` + field + `,"messages":[{"role":"user","content":"hello"}]}`)
