@@ -12,6 +12,15 @@ type requestMetadataContextKey struct{}
 
 var requestMetadataKey = requestMetadataContextKey{}
 
+type singleAccountRetryProbeContextKey struct{}
+
+// singleAccountRetryProbe 在首次需要时判定是否进入单账号退避重试模式，同一请求内至多判定一次。
+type singleAccountRetryProbe struct {
+	once   sync.Once
+	check  func(ctx context.Context) bool
+	result bool
+}
+
 type RequestMetadata struct {
 	IsMaxTokensOneHaikuRequest *bool
 	ThinkingEnabled            *bool
@@ -108,46 +117,27 @@ func WithSingleAccountRetry(ctx context.Context, value bool, bridgeOldKeys bool)
 	})
 }
 
-type singleAccountRetryResolverContextKey struct{}
-
-var singleAccountRetryResolverKey = singleAccountRetryResolverContextKey{}
-
-// singleAccountRetryResolver 延迟计算"是否单账号分组"，同一请求内只算一次。
-type singleAccountRetryResolver struct {
-	once    sync.Once
-	resolve func(ctx context.Context) bool
-	value   bool
-}
-
-func (r *singleAccountRetryResolver) get(ctx context.Context) bool {
-	r.once.Do(func() {
-		r.value = r.resolve(ctx)
-	})
-	return r.value
-}
-
-// WithSingleAccountRetryResolver 挂一个延迟判定函数：只有在请求上下文没有显式
-// SingleAccountRetry 标记、且 service 真正需要这个判断（antigravity 收到 503/预检查命中限流）时才会调用，
-// 结果在请求内缓存。
-func WithSingleAccountRetryResolver(ctx context.Context, resolve func(ctx context.Context) bool) context.Context {
-	if ctx == nil || resolve == nil {
+// WithSingleAccountRetryProbe 挂载单账号退避重试的延迟判定；显式设置的 SingleAccountRetry 标记优先于它。
+func WithSingleAccountRetryProbe(ctx context.Context, check func(ctx context.Context) bool) context.Context {
+	if ctx == nil || check == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, singleAccountRetryResolverKey, &singleAccountRetryResolver{resolve: resolve})
+	return context.WithValue(ctx, singleAccountRetryProbeContextKey{}, &singleAccountRetryProbe{check: check})
 }
 
-// ResolveSingleAccountRetry 优先返回显式标记；没有显式标记时调用延迟判定函数。
-func ResolveSingleAccountRetry(ctx context.Context) bool {
-	if v, ok := SingleAccountRetryFromContext(ctx); ok {
-		return v
-	}
+func singleAccountRetryProbeResult(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	if r, ok := ctx.Value(singleAccountRetryResolverKey).(*singleAccountRetryResolver); ok && r != nil {
-		return r.get(ctx)
+	probe, _ := ctx.Value(singleAccountRetryProbeContextKey{}).(*singleAccountRetryProbe)
+	if probe == nil {
+		return false
 	}
-	return false
+	// 判定结果在整个请求内复用，不能因调用时 ctx 已取消而被记成 false。
+	probe.once.Do(func() {
+		probe.result = probe.check(context.WithoutCancel(ctx))
+	})
+	return probe.result
 }
 
 func WithAccountSwitchCount(ctx context.Context, value int, bridgeOldKeys bool) context.Context {

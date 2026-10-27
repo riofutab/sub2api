@@ -747,7 +747,7 @@ func TestAntigravityRetryLoop_PreCheck_LazySingleAccountResolver(t *testing.T) {
 				},
 			}
 			resolverCalls := 0
-			ctx := WithSingleAccountRetryResolver(context.Background(), func(context.Context) bool {
+			ctx := WithSingleAccountRetryProbe(context.Background(), func(context.Context) bool {
 				resolverCalls++
 				return tc.singleAccount
 			})
