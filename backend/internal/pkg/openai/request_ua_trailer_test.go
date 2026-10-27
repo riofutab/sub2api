@@ -32,6 +32,13 @@ func TestEnsureCodexUATrailer(t *testing.T) {
 			want:       "codex_vscode/0.160.1 (Mac OS 15.6.0; arm64) (codex_vscode; 0.160.1)",
 		},
 		{
+			name:       "默认 CLI 身份不补尾段",
+			ua:         "codex_cli_rs/0.160.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
+			originator: "codex_cli_rs",
+			version:    "0.160.1",
+			want:       "codex_cli_rs/0.160.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
+		},
+		{
 			name:       "缺少 originator 或版本时不改",
 			ua:         "codex-tui/0.160.1 (Ubuntu 22.4.0; x86_64) xterm-256color",
 			originator: "",

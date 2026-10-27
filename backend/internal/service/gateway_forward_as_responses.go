@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -199,7 +198,15 @@ func (s *GatewayService) ForwardAsResponses(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
+		writerSizeBeforeStream := c.Writer.Size()
 		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
+		var sseErr *sseStreamErrorEventError
+		switch {
+		case errors.As(handleErr, &sseErr):
+			return nil, s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, mappedModel, c.Writer.Size() != writerSizeBeforeStream)
+		case errors.Is(handleErr, errAnthropicNativeStreamIdle) && s.rateLimitService != nil:
+			s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+		}
 	} else {
 		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
 	}
@@ -546,18 +553,10 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
-	// 客户端断开后只停止写出，继续读上游直到 message_stop，末尾 message_delta 的用量照常计费。
-	clientDisconnected := false
-	sawMessageStop := false
-	drain := newAnthropicCompatDrain(s.cfg, resp.Body)
-	defer drain.stop()
+	writerSizeBeforeStream := c.Writer.Size()
 
-	scanner := bufio.NewScanner(resp.Body)
-	maxLineSize := defaultMaxLineSize
-	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.cfg.Gateway.MaxLineSize
-	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	stream := newAnthropicCompatStream(s.cfg, c, resp, "forward_as_responses", requestID)
+	defer stream.stop()
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -570,12 +569,12 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			Stream:           true,
 			Duration:         time.Since(startTime),
 			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			ClientDisconnect: stream.clientDisconnected,
 		}
 	}
 
 	// processEvent handles a single parsed Anthropic SSE event.
-	processEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+	processEvent := func(event *apicompat.AnthropicStreamEvent) {
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -590,11 +589,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		if event.Type == "message_start" && event.Message != nil {
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 		}
-		if event.Type == "message_stop" {
-			sawMessageStop = true
-		}
-		if clientDisconnected {
-			return false
+		if stream.clientDisconnected {
+			return
 		}
 
 		// Keep the terminal Responses usage aligned with the normalized billing
@@ -626,20 +622,25 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					logger.L().Info("forward_as_responses stream: client disconnected",
-						zap.String("request_id", requestID),
-					)
-					return true // client disconnected
+					stream.markClientDisconnected()
+					return
 				}
 			}
 		}
 		if len(events) > 0 {
 			c.Writer.Flush()
 		}
-		return false
 	}
 
 	finalizeStream := func() (*ForwardResult, error) {
+		if failure := stream.failure(); failure != nil {
+			return finishAnthropicCompatStreamFailure(c, writerSizeBeforeStream, failure, resultWithUsage(), func() {
+				writeAnthropicCompatResponsesStreamFailure(c, state, clientToolRestorer, failure)
+			})
+		}
+		if stream.clientDisconnected {
+			return resultWithUsage(), nil
+		}
 		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
 			for _, evt := range finalEvents {
 				sse, err := apicompat.ResponsesEventToSSE(evt)
@@ -655,19 +656,21 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	}
 
 	// Read Anthropic SSE events
-	for scanner.Scan() {
-		drain.touch()
-		line := scanner.Text()
+	for {
+		line, ok := stream.nextLine()
+		if !ok {
+			break
+		}
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
 		}
 
 		// Read data line
-		if !scanner.Scan() {
+		dataLine, ok := stream.nextLine()
+		if !ok {
 			break
 		}
-		dataLine := scanner.Text()
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
@@ -683,98 +686,14 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			continue
 		}
 
-		if processEvent(&event) {
-			clientDisconnected = true
-			drain.start()
+		stream.observe(&event, payload)
+		if stream.upstreamErrType != "" {
+			break
 		}
-	}
-
-	readErr := scanner.Err()
-	if readErr != nil {
-		if !errors.Is(readErr, context.Canceled) && !errors.Is(readErr, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses stream: read error",
-				zap.Error(readErr),
-				zap.String("request_id", requestID),
-			)
-		}
-	}
-	if !sawMessageStop {
-		// 截断的上游不补发合成的 response.completed，按错误返回并带上已计量的用量。
-		return anthropicCompatIncompleteStream(c, resultWithUsage(), readErr)
-	}
-	if clientDisconnected {
-		return resultWithUsage(), nil
+		processEvent(&event)
 	}
 
 	return finalizeStream()
-}
-
-// anthropicCompatDrain bounds the upstream reading a compatibility stream keeps
-// doing after its client disconnected: once draining started, the upstream body
-// is closed when no line arrives within gateway.stream_data_interval_timeout
-// (0 disables the bound, as on the native /v1/messages path).
-type anthropicCompatDrain struct {
-	body  io.Closer
-	idle  time.Duration
-	timer *time.Timer
-}
-
-func newAnthropicCompatDrain(cfg *config.Config, body io.Closer) *anthropicCompatDrain {
-	d := &anthropicCompatDrain{body: body}
-	if cfg != nil && cfg.Gateway.StreamDataIntervalTimeout > 0 {
-		d.idle = time.Duration(cfg.Gateway.StreamDataIntervalTimeout) * time.Second
-	}
-	return d
-}
-
-func (d *anthropicCompatDrain) start() {
-	if d.idle <= 0 || d.timer != nil {
-		return
-	}
-	d.timer = time.AfterFunc(d.idle, func() { _ = d.body.Close() })
-}
-
-func (d *anthropicCompatDrain) touch() {
-	if d.timer != nil {
-		d.timer.Reset(d.idle)
-	}
-}
-
-func (d *anthropicCompatDrain) stop() {
-	if d.timer != nil {
-		d.timer.Stop()
-	}
-}
-
-// anthropicCompatIncompleteStream reports a compatibility stream that ended
-// without message_stop, mirroring the native /v1/messages contract: a read
-// failure before anything reached the client fails over with a nil result;
-// otherwise the usage the upstream already metered travels with the error so
-// the handler still bills it (nil when nothing was metered).
-func anthropicCompatIncompleteStream(c *gin.Context, result *ForwardResult, readErr error) (*ForwardResult, error) {
-	observed := result.Usage.hasObservedTokens()
-	if readErr != nil && !observed && !c.Writer.Written() {
-		body, _ := json.Marshal(map[string]any{
-			"type": "error",
-			"error": map[string]string{
-				"type":    "upstream_disconnected",
-				"message": "upstream stream disconnected: " + sanitizeStreamError(readErr),
-			},
-		})
-		return nil, &UpstreamFailoverError{
-			StatusCode:             http.StatusBadGateway,
-			ResponseBody:           body,
-			RetryableOnSameAccount: true,
-		}
-	}
-	err := errors.New("stream usage incomplete: missing terminal event")
-	if readErr != nil {
-		err = fmt.Errorf("stream usage incomplete: %w", readErr)
-	}
-	if !observed {
-		return nil, err
-	}
-	return result, err
 }
 
 // appendRawJSON appends a JSON fragment string to existing raw JSON.

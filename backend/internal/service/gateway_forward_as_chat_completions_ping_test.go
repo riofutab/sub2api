@@ -163,9 +163,8 @@ func TestHandleCCStreamingFromAnthropic_PingDoesNotSetFirstToken(t *testing.T) {
 		&http.Response{Body: io.NopCloser(strings.NewReader("event: ping\ndata: {\"type\":\"ping\"}\n\n"))},
 		context, "gpt-5", "claude-sonnet-4.5", nil, time.Now(),
 	)
-	// 只有 ping、没有 message_stop 的流按截断处理（#7791）；未计量任何用量时 result 为 nil。
-	require.ErrorContains(t, err, "missing terminal event")
-	require.Nil(t, result)
+	require.NoError(t, err)
+	require.Nil(t, result.FirstTokenMs)
 	require.True(t, strings.HasPrefix(writer.Body.String(), ": ping\n\n"))
 }
 
@@ -191,17 +190,18 @@ func TestHandleCCStreamingFromAnthropic_PingWriteFailureStopsDownstream(t *testi
 			)
 			require.NoError(t, err)
 			require.True(t, writer.failed)
+			require.True(t, result.ClientDisconnect)
 			require.Zero(t, writer.writesAfterError)
 			require.Zero(t, writer.flushesAfterError)
 			require.NotContains(t, writer.Body.String(), "[DONE]")
-			// 客户端断开后继续读上游（#7791），末尾 message_delta 的用量照常计入。
+			// 客户端断开后继续读上游，末尾 message_delta 的用量照常计入。
 			require.True(t, result.ClientDisconnect)
 			require.Equal(t, 7, result.Usage.OutputTokens)
+			require.NotNil(t, result.FirstTokenMs)
 			if withUsage {
 				require.Equal(t, 10, result.Usage.InputTokens)
 			} else {
 				require.Zero(t, result.Usage.InputTokens)
-				require.Nil(t, result.FirstTokenMs)
 			}
 		})
 	}

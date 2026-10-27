@@ -8,17 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 真实 Codex 客户端（TUI / exec / VS Code）经 app-server 初始化后，UA 末尾都带
-// `(clientInfo.name; clientInfo.version)`；缺这一段的形态不是真实客户端能发出的。
-func TestEnforceCodexIdentityHeaders_DefaultUAHasClientTrailer(t *testing.T) {
+// codex-rs 只在 app-server 收到 clientInfo 初始化时同时改写 originator 并在 UA 末尾追加
+// `(clientInfo.name; clientInfo.version)`；默认 originator codex_cli_rs 的真实 UA 不带这一组。
+func TestEnforceCodexIdentityHeaders_DefaultCLIUAHasNoClientTrailer(t *testing.T) {
 	h := make(http.Header)
 	h.Set("originator", "codex-tui")
 
 	enforceCodexIdentityHeaders(h)
 
-	want := openai.CodexDefaultOriginator + "/" + codexCLIVersion + codexCLIUserAgentSuffix +
-		" (" + openai.CodexDefaultOriginator + "; " + codexCLIVersion + ")"
-	require.Equal(t, want, h.Get("user-agent"))
+	require.Equal(t, openai.CodexCLIOriginator, h.Get("originator"))
+	require.Equal(t, openai.CodexCLIOriginator+"/"+codexCLIVersion+codexCLIUserAgentSuffix, h.Get("user-agent"))
 }
 
 func TestEnforceCodexIdentityHeaders_OverrideUAWithoutTrailerGetsOne(t *testing.T) {
@@ -36,8 +35,8 @@ func TestEnforceCodexIdentityHeaders_SyncedVersionUpdatesTrailer(t *testing.T) {
 	h := make(http.Header)
 	h.Set("originator", "codex-tui")
 
-	enforceCodexIdentityHeaders(h)
+	enforceCodexIdentityHeadersWithUA(h, "codex_exec/0.150.0 (Mac OS 15.0; arm64) iTerm.app (codex_exec; 0.150.0)")
 
-	require.Equal(t, "codex-tui/0.200.1"+codexCLIUserAgentSuffix+" (codex-tui; 0.200.1)", h.Get("user-agent"))
+	require.Equal(t, "codex_exec/0.200.1 (Mac OS 15.0; arm64) iTerm.app (codex_exec; 0.200.1)", h.Get("user-agent"))
 	require.Equal(t, "0.200.1", h.Get("version"))
 }

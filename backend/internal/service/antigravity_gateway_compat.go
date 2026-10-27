@@ -250,6 +250,9 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 	if json.Unmarshal(request.claudeBody, &claudeRequest) != nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 	}
+	if geminiImageGenerationDenied(c, nil, request.originalModel, mappedModel) {
+		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", ImageGenerationPermissionMessage())
+	}
 
 	if s.tokenProvider == nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadGateway, "api_error", "Antigravity token provider not configured")
