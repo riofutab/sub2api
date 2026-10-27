@@ -110,9 +110,10 @@ func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
 
 // AnthropicImageSource describes the source data for an image content block.
 type AnthropicImageSource struct {
-	Type      string `json:"type"` // "base64"
+	Type      string `json:"type"` // "base64" or "url"
 	MediaType string `json:"media_type"`
 	Data      string `json:"data"`
+	URL       string `json:"url,omitempty"`
 }
 
 // AnthropicTool describes a tool available to the model.
@@ -166,12 +167,24 @@ type AnthropicPromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
+// AnthropicCacheCreationBreakdown mirrors the nested usage.cache_creation object
+// Anthropic returns alongside cache_creation_input_tokens. The aggregate alone
+// cannot be billed correctly: 1h cache writes cost more than 5m ones, so a
+// converter that drops this object forces the billing layer to fall back to the
+// 5m price for every cache write.
+type AnthropicCacheCreationBreakdown struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+}
+
 // AnthropicUsage holds token counts in Anthropic format.
 type AnthropicUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// CacheCreation carries the 5m/1h split for the aggregate above.
+	CacheCreation *AnthropicCacheCreationBreakdown `json:"cache_creation,omitempty"`
 	// Anthropic-compatible providers can also expose their native OpenAI-style
 	// total/cache fields. Preserve them so callers can normalize provider totals
 	// into Anthropic's mutually-exclusive billing buckets.
@@ -430,10 +443,18 @@ type ResponsesOutput struct {
 
 // MarshalJSON 处理 tool_search_call 项的线上形态（复用 CallID/Arguments 字段）：
 // execution 固定为 "client"（codex 的必填字段，非 client 的调用会被静默忽略），
-// arguments 是 JSON 对象而非 function_call 语义下的字符串。其余类型走默认结构体
-// 序列化，输出逐字节不变。
+// arguments 是 JSON 对象而非 function_call 语义下的字符串。reasoning 项始终
+// 携带 summary 数组；其余类型走默认结构体序列化。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 	type responsesOutputAlias ResponsesOutput
+	// Terminal responses must retain summary:[] for signature-only reasoning.
+	// An explicit field overrides the alias's omitempty without a JSON round trip.
+	if o.Type == "reasoning" && len(o.Summary) == 0 {
+		return json.Marshal(struct {
+			responsesOutputAlias
+			Summary []ResponsesSummary `json:"summary"`
+		}{responsesOutputAlias: responsesOutputAlias(o), Summary: []ResponsesSummary{}})
+	}
 	if o.Type != "tool_search_call" {
 		return json.Marshal(responsesOutputAlias(o))
 	}

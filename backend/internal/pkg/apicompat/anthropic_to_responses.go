@@ -19,7 +19,7 @@ func AnthropicToResponses(req *AnthropicRequest) (*ResponsesRequest, error) {
 // AnthropicToResponsesWithMinOutputTokens converts an Anthropic request using
 // the supplied max_output_tokens floor.
 func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTokens int) (*ResponsesRequest, error) {
-	if err := openai.ValidateGPT61SolReasoningEffort(req.Model, anthropicReasoningEffort(req)); err != nil {
+	if err := openai.ValidateGPT61ReasoningEffort(req.Model, anthropicReasoningEffort(req)); err != nil {
 		return nil, err
 	}
 	input, err := convertAnthropicToResponsesInput(req.System, req.Messages, req.Model)
@@ -50,8 +50,6 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 
 	storeFalse := false
 	out.Store = &storeFalse
-	parallelToolCalls := true
-	out.ParallelToolCalls = &parallelToolCalls
 	out.Text = &ResponsesText{Verbosity: "medium"}
 
 	if req.MaxTokens > 0 {
@@ -68,7 +66,7 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 
 	// An explicit thinking disable takes precedence over output_config.effort.
 	effort := anthropicReasoningEffort(req)
-	if openai.IsGPT61SolModelSpelling(req.Model) && req.OutputConfig != nil && req.OutputConfig.Effort == "max" && effort != "none" {
+	if (openai.IsGPT61SolModelSpelling(req.Model) || openai.IsGPT61TerraModelSpelling(req.Model)) && req.OutputConfig != nil && req.OutputConfig.Effort == "max" && effort != "none" {
 		effort = "max"
 	}
 	out.Reasoning = &ResponsesReasoning{
@@ -87,7 +85,31 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 		out.ToolChoice = tc
 	}
 
+	parallelToolCalls := true
+	if len(out.Tools) > 0 {
+		parallelToolCalls = anthropicParallelToolCalls(req.ToolChoice)
+	}
+	out.ParallelToolCalls = &parallelToolCalls
+
 	return out, nil
+}
+
+// anthropicParallelToolCalls preserves the default unless a supported choice
+// explicitly disables parallel tools. Tool-choice validation stays with callers.
+func anthropicParallelToolCalls(raw json.RawMessage) bool {
+	var choice struct {
+		Type                   string `json:"type"`
+		DisableParallelToolUse bool   `json:"disable_parallel_tool_use"`
+	}
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		return true
+	}
+	switch choice.Type {
+	case "auto", "any", "tool":
+		return !choice.DisableParallelToolUse
+	default:
+		return true
+	}
 }
 
 // convertAnthropicToolChoiceToResponses maps Anthropic tool_choice to Responses format.
@@ -368,10 +390,16 @@ func fromResponsesCallID(id string) string {
 	return id
 }
 
-// anthropicImageToDataURI converts an AnthropicImageSource to a data URI string.
-// Returns "" if the source is nil or has no data.
+// anthropicImageToDataURI returns a URL source unchanged or encodes base64 data
+// as a data URI. Returns "" if the source is nil or has no image data.
 func anthropicImageToDataURI(src *AnthropicImageSource) string {
-	if src == nil || src.Data == "" {
+	if src == nil {
+		return ""
+	}
+	if src.Type == "url" {
+		return src.URL
+	}
+	if src.Data == "" {
 		return ""
 	}
 	mediaType := src.MediaType
