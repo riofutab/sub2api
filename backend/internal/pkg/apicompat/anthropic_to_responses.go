@@ -325,6 +325,11 @@ func anthropicAssistantToResponses(raw json.RawMessage, model string) ([]Respons
 		if sig == "" || (strings.HasPrefix(sig, "gAAAA") && !isGPTReasoningResponsesTarget(model)) {
 			continue
 		}
+		// CC Switch carries a JSON reasoning item in this versioned envelope,
+		// not provider ciphertext. Ignore the foreign state when resuming directly.
+		if strings.HasPrefix(sig, "ccswitch-openai-reasoning-v1:") {
+			continue
+		}
 		// The Responses wire format requires a summary array even when the
 		// provider returned only ciphertext. This visible summary supplements
 		// encrypted_content; it is not a substitute for the reasoning state.

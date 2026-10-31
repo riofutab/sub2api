@@ -125,7 +125,7 @@ func TestResponsesOutput_ReasoningAlwaysCarriesSummary(t *testing.T) {
 	// Non-reasoning output keeps its existing wire shape.
 	message, err := json.Marshal(ResponsesOutput{Type: "message", ID: "m", Role: "assistant"})
 	require.NoError(t, err)
-	require.JSONEq(t, `{"type":"message","id":"m","role":"assistant"}`, string(message))
+	require.JSONEq(t, `{"type":"message","id":"m","role":"assistant","content":[]}`, string(message))
 }
 
 func TestAnthropicEventToResponses_ReasoningSummaryClosesWithItem(t *testing.T) {
