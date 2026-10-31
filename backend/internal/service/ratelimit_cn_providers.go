@@ -250,8 +250,39 @@ func isCNProviderQuotaExhausted429(account *Account, responseBody []byte) bool {
 		"5-hour usage limit",
 		"quota will reset",
 		"usage limit for this billing cycle",
+		// 中文耗尽文案（智谱等）；不收「额度」「quota」这类宽泛词，Kimi 的动态
+		// 分配限流文案 "usage allocated quota exceeded" 也含 quota。
+		"已用尽",
+		"已用完",
+		"已耗尽",
+		"使用上限",
 	} {
 		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// cnQuotaSnapshotExhaustedPercent：429 时快照里任一窗口用量达到该百分比，
+// 不论文案如何都按窗口耗尽冷却。快照最多滞后一个额度探测周期。
+const cnQuotaSnapshotExhaustedPercent = 90
+
+// cnProviderQuotaSnapshotNearExhausted 判断 Coding Plan 账号的窗口用量快照是否
+// 有任一窗口 >= percent。快照缺失时返回 false：没有用量数据不能证明额度耗尽，
+// 按短冷却处理（见 TestHandle429_KimiDynamicAllocation429UsesShortFallback）。
+func cnProviderQuotaSnapshotNearExhausted(account *Account, percent float64) bool {
+	if account == nil || len(account.Extra) == 0 {
+		return false
+	}
+	provider := account.Platform
+	suffixes := []string{cnExtraSuffix5hUsed, cnExtraSuffixWeeklyUsed}
+	if cnQuotaHasMonthlyWindow(provider) {
+		suffixes = append(suffixes, cnExtraSuffixMonthlyUsed)
+	}
+	for _, suffix := range suffixes {
+		raw, ok := account.Extra[cnExtraKey(provider, suffix)]
+		if ok && schedulingPercentValue(raw) >= percent {
 			return true
 		}
 	}
@@ -310,11 +341,12 @@ func (s *RateLimitService) applyCNProviderReactive429(
 		s.handleCNProviderInsufficientBalance(ctx, account, extractUpstreamErrorMessage(responseBody))
 		return true
 	}
-	// 2) 只有响应体明确表示窗口额度耗尽时，才冷却到 5h/weekly reset。
-	// 动态分配、并发和短时资源限流也可能返回 429；这些错误不能因为快照
-	// 中存在一个未来 reset 时间就被冷却近几小时。
+	// 2) 只有响应体明确表示窗口额度耗尽，或用量快照显示窗口接近耗尽时，才冷却到
+	// 5h/weekly reset。动态分配、并发和频率限制也可能返回 429；这些错误不能因为
+	// 快照中存在一个未来 reset 时间就被冷却近几小时。
 	if account.IsCodingPlan() {
-		if isCNProviderQuotaExhausted429(account, responseBody) &&
+		if (isCNProviderQuotaExhausted429(account, responseBody) ||
+			cnProviderQuotaSnapshotNearExhausted(account, cnQuotaSnapshotExhaustedPercent)) &&
 			s.cooldownCNProviderToQuotaSnapshotReset(ctx, account, "429", "cn_coding_plan_rate_limited") != nil {
 			return true
 		}
