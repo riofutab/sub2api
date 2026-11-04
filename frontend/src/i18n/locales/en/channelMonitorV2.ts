@@ -101,7 +101,7 @@ export default {
       platformsTitle: 'Platforms and models',
       platformsHint:
         'Leave empty = show all real model names; when filled, only listed models get their own rows and the rest roll into “Other”',
-      modelsPlaceholder: 'Empty = all real models; or list popular models (rest → Other)',
+      modelsPlaceholder: 'Empty = all real models; or list models, prefix wildcards like claude-opus-* allowed (rest → Other)',
       badgeAllModels: 'All models',
       badgeOther: '+ Other',
       groupsTitle: 'Monitored groups',

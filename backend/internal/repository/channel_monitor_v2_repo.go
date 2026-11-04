@@ -162,7 +162,7 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 			if p.Platform != platform || len(p.Models) == 0 {
 				continue
 			}
-			for _, model := range p.Models {
+			for _, model := range channelMonitorV2ExactModels(p.Models) {
 				modelCounts[platform+"\x00"+model] = modelValue{platform: platform, count: 0}
 			}
 		}
@@ -568,15 +568,17 @@ func seedChannelMonitorV2MatrixAccumulators(filter service.ChannelMonitorV2Filte
 
 func configuredChannelMonitorV2Models(cfg service.ChannelMonitorV2Config, platform string, filter service.ChannelMonitorV2Filter) []string {
 	models := []string{}
+	hasAllowList := false
 	for _, p := range cfg.Platforms {
 		if p.Platform != platform {
 			continue
 		}
-		models = append(models, p.Models...)
+		hasAllowList = len(p.Models) > 0
+		models = append(models, channelMonitorV2ExactModels(p.Models)...)
 		break
 	}
 	if len(filter.Models) > 0 {
-		if len(models) == 0 {
+		if !hasAllowList {
 			models = append(models, filter.Models...)
 		} else {
 			models = intersectStrings(models, filter.Models)
@@ -1197,6 +1199,7 @@ func channelMonitorV2EnabledPlatforms(cfg service.ChannelMonitorV2Config) []stri
 //   - platform not in config / disabled → keep raw model (still collected)
 //   - models list empty → show the real model name (no collapsing)
 //   - models list non-empty → selected keep identity; everything else → __other__
+//   - an entry ending in "*" is a prefix pattern; matches keep their real name
 func channelMonitorV2DisplayModel(cfg service.ChannelMonitorV2Config, platform, model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -1212,7 +1215,7 @@ func channelMonitorV2DisplayModel(cfg service.ChannelMonitorV2Config, platform, 
 			return model
 		}
 		for _, selected := range p.Models {
-			if selected == model {
+			if channelMonitorV2ModelMatches(selected, model) {
 				return model
 			}
 		}
@@ -1221,6 +1224,30 @@ func channelMonitorV2DisplayModel(cfg service.ChannelMonitorV2Config, platform, 
 	// Platform not configured: still show the real model so traffic is visible.
 	return model
 }
+
+// channelMonitorV2ModelPatternSuffix marks an allow-list entry as a prefix
+// pattern, so new model releases do not fall into __other__ until listed.
+const channelMonitorV2ModelPatternSuffix = "*"
+
+func channelMonitorV2ModelMatches(selected, model string) bool {
+	if prefix, ok := strings.CutSuffix(selected, channelMonitorV2ModelPatternSuffix); ok {
+		return strings.HasPrefix(model, prefix)
+	}
+	return selected == model
+}
+
+// channelMonitorV2ExactModels drops prefix patterns: only concrete names can be
+// pre-seeded as zero-traffic rows or picker options.
+func channelMonitorV2ExactModels(models []string) []string {
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		if !strings.HasSuffix(model, channelMonitorV2ModelPatternSuffix) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
 func channelMonitorV2ModelSelected(filter service.ChannelMonitorV2Filter, cfg service.ChannelMonitorV2Config, platform, model string) bool {
 	if len(filter.Models) == 0 {
 		return true

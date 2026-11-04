@@ -121,6 +121,7 @@
               :value="platform.models.join(', ')"
               type="text"
               :placeholder="t('channelMonitorV2.settings.modelsPlaceholder')"
+              :title="t('channelMonitorV2.settings.modelsPlaceholder')"
               @change="setModels(platform, $event)"
             />
             <span

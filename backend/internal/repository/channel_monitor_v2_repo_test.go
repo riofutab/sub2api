@@ -43,6 +43,33 @@ func TestChannelMonitorV2DisplayModelIsPlatformScoped(t *testing.T) {
 	require.True(t, channelMonitorV2ModelSelected(service.ChannelMonitorV2Filter{Models: []string{service.ChannelMonitorV2OtherModel}}, cfg, "grok", "shared"))
 }
 
+func TestChannelMonitorV2DisplayModelPrefixWildcardKeepsRealName(t *testing.T) {
+	cfg := service.ChannelMonitorV2Config{Platforms: []service.ChannelMonitorV2PlatformConfig{
+		{Platform: "anthropic", Enabled: true, Models: []string{"claude-opus-*", "claude-sonnet-4-6"}},
+		{Platform: "openai", Enabled: true, Models: []string{"*"}},
+	}}
+
+	require.Equal(t, "claude-opus-5-5", channelMonitorV2DisplayModel(cfg, "anthropic", "claude-opus-5-5"))
+	require.Equal(t, "claude-sonnet-4-6", channelMonitorV2DisplayModel(cfg, "anthropic", "claude-sonnet-4-6"))
+	require.Equal(t, service.ChannelMonitorV2OtherModel, channelMonitorV2DisplayModel(cfg, "anthropic", "claude-sonnet-5-5"))
+	// The pattern text itself is not a model name and must not match literally only.
+	require.Equal(t, service.ChannelMonitorV2OtherModel, channelMonitorV2DisplayModel(cfg, "anthropic", "claude-opus"))
+	require.Equal(t, "gpt-6.1-sol", channelMonitorV2DisplayModel(cfg, "openai", "gpt-6.1-sol"))
+	require.True(t, channelMonitorV2ModelSelected(service.ChannelMonitorV2Filter{Models: []string{"claude-opus-5-5"}}, cfg, "anthropic", "claude-opus-5-5"))
+}
+
+func TestChannelMonitorV2ConfiguredModelsSkipWildcardPatterns(t *testing.T) {
+	cfg := service.ChannelMonitorV2Config{Platforms: []service.ChannelMonitorV2PlatformConfig{
+		{Platform: "anthropic", Enabled: true, Models: []string{"claude-opus-*", "claude-sonnet-4-6"}},
+		{Platform: "openai", Enabled: true, Models: []string{"gpt-*"}},
+	}}
+
+	require.Equal(t, []string{"claude-sonnet-4-6"}, configuredChannelMonitorV2Models(cfg, "anthropic", service.ChannelMonitorV2Filter{}))
+	require.Empty(t, configuredChannelMonitorV2Models(cfg, "openai", service.ChannelMonitorV2Filter{}))
+	// A pattern-only allow-list is still an allow-list: filter models are intersected, not seeded.
+	require.Empty(t, configuredChannelMonitorV2Models(cfg, "openai", service.ChannelMonitorV2Filter{Models: []string{"gpt-6.1-sol"}}))
+}
+
 func TestChannelMonitorV2MatrixDimensionKey(t *testing.T) {
 	cfg := service.ChannelMonitorV2Config{Platforms: []service.ChannelMonitorV2PlatformConfig{{Platform: "openai", Enabled: true, Models: []string{"gpt-5"}}}}
 	key := channelMonitorV2MatrixDimensionKey(service.ChannelMonitorV2GroupByPlatformGroupModel, cfg, "openai", 7, "gpt-5")

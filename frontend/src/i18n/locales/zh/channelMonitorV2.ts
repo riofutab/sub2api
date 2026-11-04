@@ -99,7 +99,7 @@ export default {
       addPlatform: '添加平台',
       platformsTitle: '平台与模型',
       platformsHint: '留空 = 展示全部真实模型名；填写后仅名单内单独成行，其余归入「其他」',
-      modelsPlaceholder: '留空=全部真实模型；或填写主流模型名单（其余归其他）',
+      modelsPlaceholder: '留空=全部真实模型；或填写模型名单，支持前缀通配如 claude-opus-*（其余归其他）',
       badgeAllModels: '全部模型',
       badgeOther: '+ 其他',
       groupsTitle: '监控分组',
