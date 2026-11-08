@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/anthropicfp"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
@@ -994,9 +993,10 @@ type cacheControlPath struct {
 }
 
 func collectCacheControlPaths(body []byte) (invalidThinking []cacheControlPath, messagePaths []string, toolPaths []string, systemPaths []string) {
-	// 零拷贝读取：gjson.GetBytes 会把命中的整段 messages 复制一份，这里的结果只在函数内使用。
-	jsonStr := unsafe.String(unsafe.SliceData(body), len(body))
-	system := gjson.Get(jsonStr, "system")
+	// Borrow only during this synchronous scan. Returned paths/logs own their
+	// strings; no result may retain the request body after this function returns.
+	view := openAIWSPayloadStringView(body)
+	system := gjson.Get(view, "system")
 	if system.IsArray() {
 		sysIndex := 0
 		system.ForEach(func(_, item gjson.Result) bool {
@@ -1016,7 +1016,7 @@ func collectCacheControlPaths(body []byte) (invalidThinking []cacheControlPath, 
 		})
 	}
 
-	messages := gjson.Get(jsonStr, "messages")
+	messages := gjson.Get(view, "messages")
 	if messages.IsArray() {
 		msgIndex := 0
 		messages.ForEach(func(_, msg gjson.Result) bool {
@@ -1044,7 +1044,7 @@ func collectCacheControlPaths(body []byte) (invalidThinking []cacheControlPath, 
 		})
 	}
 
-	tools := gjson.Get(jsonStr, "tools")
+	tools := gjson.Get(view, "tools")
 	if tools.IsArray() {
 		toolIndex := 0
 		tools.ForEach(func(_, tool gjson.Result) bool {

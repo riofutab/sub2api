@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"math"
 	"regexp"
 	"sort"
@@ -61,13 +62,17 @@ type jsonRange struct {
 }
 
 type RequestBodyRef struct {
-	data []byte
+	data   []byte
+	parsed *gatewayRequestBodyState
 }
 
+// NewRequestBodyRef borrows immutable data. Callers must replace the body rather
+// than modify its backing storage while any request or attempt still borrows it.
 func NewRequestBodyRef(data []byte) *RequestBodyRef {
 	return &RequestBodyRef{data: data}
 }
 
+// Bytes returns a read-only view; use Replace to invalidate parsed state.
 func (b *RequestBodyRef) Bytes() []byte {
 	if b == nil {
 		return nil
@@ -87,6 +92,55 @@ func (b *RequestBodyRef) Replace(data []byte) {
 		return
 	}
 	b.data = data
+	// Even replacing with the same slice invalidates the snapshot. Callers may
+	// have reused storage after releasing its previous immutable view.
+	b.parsed = nil
+}
+
+// gatewayRequestBodySeed keys body fingerprints for this process only.
+var gatewayRequestBodySeed = maphash.MakeSeed()
+
+// gatewayRequestBodyState is an immutable snapshot of a successful parse. It
+// owns scalar strings and stores only offsets for large fields, so sharing it
+// between attempts cannot retain an old request body or mutable request state.
+type gatewayRequestBodyState struct {
+	model, metadataUserID, outputEffort, speed string
+	stream, hasSystem, thinkingEnabled         bool
+	maxTokens                                  int
+	protocol                                   string
+	systemRange, messagesRange, inputRange     jsonRange
+	fingerprint                                uint64
+}
+
+func (p *ParsedRequest) saveBodyState() {
+	p.Body.parsed = &gatewayRequestBodyState{
+		model: p.Model, metadataUserID: p.MetadataUserID, outputEffort: p.OutputEffort, speed: p.Speed,
+		stream: p.Stream, hasSystem: p.HasSystem, thinkingEnabled: p.ThinkingEnabled, maxTokens: p.MaxTokens,
+		protocol: p.protocol, systemRange: p.systemRange, messagesRange: p.messagesRange, inputRange: p.inputRange,
+		fingerprint: maphash.Bytes(gatewayRequestBodySeed, p.Body.Bytes()),
+	}
+}
+
+func (p *ParsedRequest) restoreBodyState(state *gatewayRequestBodyState) {
+	p.Model, p.MetadataUserID, p.OutputEffort, p.Speed = state.model, state.metadataUserID, state.outputEffort, state.speed
+	p.Stream, p.HasSystem, p.ThinkingEnabled, p.MaxTokens = state.stream, state.hasSystem, state.thinkingEnabled, state.maxTokens
+	p.protocol = state.protocol
+	p.systemRange, p.messagesRange, p.inputRange = state.systemRange, state.messagesRange, state.inputRange
+}
+
+func (p *ParsedRequest) reusableBodyState(data []byte) *gatewayRequestBodyState {
+	if p.Body == nil || p.Body.parsed == nil || p.Body.parsed.protocol != p.protocol {
+		return nil
+	}
+	current := p.Body.Bytes()
+	// Identity alone would trust the immutable borrowing contract. The content
+	// fingerprint also catches in-place edits of shared storage, which then
+	// reparse as before; it costs one hash pass instead of a full parse.
+	if len(data) == 0 || len(data) != len(current) || &data[0] != &current[0] ||
+		maphash.Bytes(gatewayRequestBodySeed, data) != p.Body.parsed.fingerprint {
+		return nil
+	}
+	return p.Body.parsed
 }
 
 func missingJSONRange() jsonRange {
@@ -263,7 +317,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	if parsed == nil || parsed.Body == nil {
 		return fmt.Errorf("empty request body")
 	}
-	parsed.parsedBody = nil
+	parsed.Body.parsed = nil
 
 	bodyBytes := parsed.Body.Bytes()
 	if !gjson.ValidBytes(bodyBytes) {
@@ -330,8 +384,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	}
 
 	setGatewayRequestRanges(parsed, protocol, &fields)
-	parsed.parsedBody = bodyBytes
-	parsed.parsedModel = parsed.Model
+	parsed.saveBodyState()
 	return nil
 }
 
@@ -387,11 +440,6 @@ type ParsedRequest struct {
 	systemRange   jsonRange // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容
 	messagesRange jsonRange // messages/contents 的 raw JSON 范围，绑定 Body 当前内容
 	inputRange    jsonRange // Responses API input 的 raw JSON 范围，绑定 Body 当前内容
-
-	// parsedBody/parsedModel 记录最近一次成功解析的 body 切片与解析出的 Model。
-	// ReplaceBody/CloneForBody 传入同一切片且 Model 未被外部改写时，派生状态仍然有效，跳过重新解析。
-	parsedBody  []byte
-	parsedModel string
 
 	// GroupID 请求所属分组 ID（来自 API Key）
 	GroupID *int64
@@ -514,7 +562,11 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	clone := *p
 	clone.Body = NewRequestBodyRef(body)
 	clone.OnUpstreamAccepted = nil
-	if p.derivedStateMatches(body) {
+	if state := p.reusableBodyState(body); state != nil {
+		clone.Body.parsed = state
+		// Restore derived fields just as reparsing would; callers can have
+		// temporarily overridden exported fields such as Model for routing.
+		clone.restoreBodyState(state)
 		return &clone, nil
 	}
 	if err := refreshGatewayRequestRanges(&clone, clone.protocol); err != nil {
@@ -523,25 +575,13 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	return &clone, nil
 }
 
-// derivedStateMatches 判断当前派生字段是否仍对应 body：与上次成功解析的是同一底层切片
-// （首地址 + 长度相同），且 Model 未被调用方直接改写。
-// 依赖约定：body 过滤器不原地修改字节，未改动时原样返回入参切片。
-func (p *ParsedRequest) derivedStateMatches(body []byte) bool {
-	last := p.parsedBody
-	if len(body) == 0 || len(last) != len(body) || unsafe.SliceData(last) != unsafe.SliceData(body) {
-		return false
-	}
-	return p.Model == p.parsedModel
-}
-
 // ReplaceBody 统一刷新当前 body 和 raw range，保证后续 helper 读取的是最新请求体。
-// data 与上次解析的是同一切片时跳过重新解析；调用方不得原地修改 body 字节。
 func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	if p == nil {
 		return fmt.Errorf("parse request: empty request")
 	}
-	if p.Body != nil && p.derivedStateMatches(data) {
-		p.Body.Replace(data)
+	if state := p.reusableBodyState(data); state != nil {
+		p.restoreBodyState(state)
 		return nil
 	}
 	if p.Body == nil {
@@ -1595,39 +1635,29 @@ func filterThinkingBlocksInternal(body []byte, alwaysThinking bool) []byte {
 		!bytes.Contains(body, []byte(`"thinking" :`)) {
 		return body
 	}
-	// 开了 thinking 的请求几乎都带历史 thinking 块，上面的字节预检基本拦不住；
-	// 先只读遍历确认确实有块要删，绝大多数签名齐全的请求不必反序列化整个请求体。
-	if !thinkingBlocksNeedFiltering(body, alwaysThinking) {
+	// Signed thinking history and top-level thinking config defeat the substring
+	// check on most requests; decide without decoding when nothing is dropped.
+	if needs, decided := thinkingBlocksNeedFiltering(body, alwaysThinking); decided && !needs {
 		return body
 	}
-	return filterThinkingBlocksSlow(body, alwaysThinking)
+	return filterThinkingBlocksDecoded(body, alwaysThinking)
 }
 
-// lastObjectMember 返回对象里最后一个同名键的值，与 encoding/json 解到 map 时「后者覆盖」一致。
-func lastObjectMember(obj gjson.Result, key string) gjson.Result {
-	var found gjson.Result
-	obj.ForEach(func(k, v gjson.Result) bool {
-		if k.Str == key {
-			found = v
-		}
-		return true
-	})
-	return found
-}
-
-// thinkingBlocksNeedFiltering 只读判断 filterThinkingBlocksSlow 是否会删除任何块。
-// 必须与慢路径的判定逐条对应：对合法 JSON，慢路径会改写时这里必须返回 true。
-// 非法 JSON 或顶层不是对象时慢路径原样返回，这里返回 false 结果相同。
-func thinkingBlocksNeedFiltering(body []byte, alwaysThinking bool) bool {
-	jsonStr := *(*string)(unsafe.Pointer(&body))
-	trimmed := strings.TrimLeft(jsonStr, " \t\r\n")
-	if trimmed == "" || trimmed[0] != '{' {
-		return false
+// thinkingBlocksNeedFiltering reports whether filterThinkingBlocksDecoded would
+// drop a block, mirroring its decisions on borrowed gjson views with
+// encoding/json's last-wins rule for duplicate keys. The body is borrowed only
+// during this call. A non-object root is left to the decoding path
+// (decided=false). Invalid JSON needs no separate scan: the decoding path
+// returns it unchanged, so either answer yields the same body.
+func thinkingBlocksNeedFiltering(body []byte, alwaysThinking bool) (needs, decided bool) {
+	view := openAIWSPayloadStringView(body)
+	root := gjson.Parse(view)
+	if !root.IsObject() {
+		return false, false
 	}
-
 	var thinking, messages gjson.Result
-	gjson.Result{Type: gjson.JSON, Raw: jsonStr}.ForEach(func(key, value gjson.Result) bool {
-		switch key.Str {
+	root.ForEach(func(key, value gjson.Result) bool {
+		switch key.String() {
 		case "thinking":
 			thinking = value
 		case "messages":
@@ -1635,29 +1665,35 @@ func thinkingBlocksNeedFiltering(body []byte, alwaysThinking bool) bool {
 		}
 		return true
 	})
-	if !messages.IsArray() {
-		return false
-	}
 
 	thinkingEnabled := alwaysThinking
 	if thinking.IsObject() {
-		if t := lastObjectMember(thinking, "type"); t.Type == gjson.String && (t.Str == "enabled" || t.Str == "adaptive") {
+		var thinkType gjson.Result
+		thinking.ForEach(func(key, value gjson.Result) bool {
+			if key.String() == "type" {
+				thinkType = value
+			}
+			return true
+		})
+		if thinkType.Type == gjson.String && (thinkType.Str == "enabled" || thinkType.Str == "adaptive") {
 			thinkingEnabled = true
 		}
 	}
+	if !messages.IsArray() {
+		return false, true
+	}
 
-	needs := false
 	messages.ForEach(func(_, msg gjson.Result) bool {
 		if !msg.IsObject() {
 			return true
 		}
 		var role, content gjson.Result
-		msg.ForEach(func(k, v gjson.Result) bool {
-			switch k.Str {
+		msg.ForEach(func(key, value gjson.Result) bool {
+			switch key.String() {
 			case "role":
-				role = v
+				role = value
 			case "content":
-				content = v
+				content = value
 			}
 			return true
 		})
@@ -1666,57 +1702,50 @@ func thinkingBlocksNeedFiltering(body []byte, alwaysThinking bool) bool {
 		}
 		isAssistant := role.Type == gjson.String && role.Str == "assistant"
 		content.ForEach(func(_, block gjson.Result) bool {
-			if block.IsObject() && thinkingBlockNeedsFiltering(block, thinkingEnabled, isAssistant, alwaysThinking) {
-				needs = true
-				return false
+			if !block.IsObject() {
+				return true
 			}
-			return true
+			var blockType, data, signature gjson.Result
+			hasThinking := false
+			block.ForEach(func(key, value gjson.Result) bool {
+				switch key.String() {
+				case "type":
+					blockType = value
+				case "data":
+					data = value
+				case "signature":
+					signature = value
+				case "thinking":
+					hasThinking = true
+				}
+				return true
+			})
+			typ := ""
+			if blockType.Type == gjson.String {
+				typ = blockType.Str
+			}
+			switch {
+			case typ == "thinking" || typ == "redacted_thinking":
+				if thinkingEnabled && isAssistant {
+					if alwaysThinking && typ == "redacted_thinking" && data.Type == gjson.String && data.Str != "" {
+						return true
+					}
+					if signature.Type == gjson.String && signature.Str != "" && signature.Str != antigravity.DummyThoughtSignature {
+						return true
+					}
+				}
+				needs = true
+			case typ == "" && hasThinking:
+				needs = true
+			}
+			return !needs
 		})
 		return !needs
 	})
-	return needs
+	return needs, true
 }
 
-func thinkingBlockNeedsFiltering(block gjson.Result, thinkingEnabled, isAssistant, alwaysThinking bool) bool {
-	var blockType, signature, data gjson.Result
-	hasThinkingKey := false
-	block.ForEach(func(k, v gjson.Result) bool {
-		switch k.Str {
-		case "type":
-			blockType = v
-		case "signature":
-			signature = v
-		case "data":
-			data = v
-		case "thinking":
-			hasThinkingKey = true
-		}
-		return true
-	})
-	typ := ""
-	if blockType.Type == gjson.String {
-		typ = blockType.Str
-	}
-	switch typ {
-	case "thinking", "redacted_thinking":
-		if thinkingEnabled && isAssistant {
-			if alwaysThinking && typ == "redacted_thinking" && data.Type == gjson.String && data.Str != "" {
-				return false
-			}
-			if signature.Type == gjson.String && signature.Str != "" && signature.Str != antigravity.DummyThoughtSignature {
-				return false
-			}
-		}
-		return true
-	case "":
-		return hasThinkingKey
-	default:
-		return false
-	}
-}
-
-// filterThinkingBlocksSlow 把整个请求体反序列化成 map 后过滤，是过滤规则的权威实现。
-func filterThinkingBlocksSlow(body []byte, alwaysThinking bool) []byte {
+func filterThinkingBlocksDecoded(body []byte, alwaysThinking bool) []byte {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
