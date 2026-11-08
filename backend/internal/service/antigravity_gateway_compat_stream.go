@@ -85,6 +85,7 @@ func newAntigravityResponsesStreamAdapter(model string) *antigravityResponsesStr
 func newAntigravityResponsesStreamAdapterWithClientTools(model string, mapping apicompat.ResponsesClientToolMapping) *antigravityResponsesStreamAdapter {
 	state := apicompat.NewAnthropicEventToResponsesState()
 	state.Model = model
+	state.PreserveThinkingSignatures = apicompat.IsSignedThinkingModel(model)
 	adapter := &antigravityResponsesStreamAdapter{anthropicState: state}
 	// A nil restorer passes events through unchanged, keeping the existing
 	// behavior when the request carried no client-side tools.
