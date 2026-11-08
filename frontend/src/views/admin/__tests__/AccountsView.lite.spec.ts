@@ -11,6 +11,7 @@ const {
   getById,
   getBatchTodayStats,
   getUpstreamBillingProbeSettings,
+  getUpstreamBillingRatesWithEtag,
   getAllProxies,
   getAllGroups,
   refreshCredentials,
@@ -22,6 +23,7 @@ const {
   getById: vi.fn(),
   getBatchTodayStats: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn(),
+  getUpstreamBillingRatesWithEtag: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
   refreshCredentials: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('@/api/admin', () => ({
       listWithEtag,
       getBatchTodayStats,
       getUpstreamBillingProbeSettings,
+      getUpstreamBillingRatesWithEtag,
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
@@ -164,6 +167,7 @@ describe('admin AccountsView lite account list', () => {
     getById.mockReset().mockResolvedValue(fullAccount)
     getBatchTodayStats.mockReset().mockResolvedValue({ stats: {} })
     getUpstreamBillingProbeSettings.mockReset().mockResolvedValue({ enabled: true })
+    getUpstreamBillingRatesWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'rates-etag', data: null })
     getAllProxies.mockReset().mockResolvedValue([])
     getAllGroups.mockReset().mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }])
     refreshCredentials.mockReset()
@@ -263,6 +267,20 @@ describe('admin AccountsView lite account list', () => {
       expect.objectContaining({ lite: '1' }),
       expect.objectContaining({ etag: null })
     )
+    wrapper.unmount()
+  })
+
+  it('refreshes upstream billing rates every five minutes', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const wrapper = mountView()
+    await flushPromises()
+    const callsAfterMount = getUpstreamBillingRatesWithEtag.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 100)
+    await flushPromises()
+
+    expect(getUpstreamBillingRatesWithEtag.mock.calls.length).toBeGreaterThan(callsAfterMount)
     wrapper.unmount()
   })
 

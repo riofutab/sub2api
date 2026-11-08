@@ -1315,7 +1315,8 @@ const refreshUpstreamBillingSortedList = async (force = false) => {
   await refreshUpstreamBillingRates(force)
 }
 
-useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000, { immediate: false })
+// 不能传 immediate:false：useIntervalFn 会因此不启动，且这里没有调用 resume()。
+useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000)
 
 const saveAccountFilterValues = () => {
   try {
