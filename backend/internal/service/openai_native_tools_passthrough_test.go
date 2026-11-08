@@ -60,7 +60,7 @@ func TestOpenAIExplicitPassthroughPreservesNativeClientTools(t *testing.T) {
 
 func TestResponsesClientToolStreamFlushesInputBeforeUpstreamDone(t *testing.T) {
 	source, upstream := io.Pipe()
-	body := newGrokResponsesClientToolStreamBody(source, apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}, 0)
+	body := newGrokResponsesClientToolStreamBody(source, apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}, 0, nil)
 	t.Cleanup(func() { _ = upstream.Close(); _ = body.Close() })
 	result := make(chan string, 1)
 	go func() {

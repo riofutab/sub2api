@@ -270,7 +270,9 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		return DescribeInvalidJSON(bodyBytes)
 	}
 
-	// 只在当前函数内零拷贝读取 JSON 字段；ReplaceBody 后必须重新进入本函数刷新派生状态。
+	// Zero-copy JSON reads stay local to parsing. Persisted scalar strings must
+	// own their storage: an unescaped gjson string otherwise retains the complete
+	// request buffer when copied into queued billing work. Raw ranges stay zero-copy.
 	jsonStr := *(*string)(unsafe.Pointer(&bodyBytes))
 	clearGatewayRequestDerivedState(parsed)
 	parsed.protocol = protocol
@@ -283,7 +285,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		if modelResult.Type != gjson.String {
 			return fmt.Errorf("invalid model field type")
 		}
-		parsed.Model = modelResult.String()
+		parsed.Model = strings.Clone(modelResult.String())
 		if protocol == domain.PlatformAnthropic {
 			normalizedModel := normalizeClaudeCodeLongContextModel(parsed.Model)
 			if normalizedModel != parsed.Model {
@@ -308,15 +310,15 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		parsed.Stream = streamResult.Bool()
 	}
 
-	parsed.MetadataUserID = fields.metadataUserID.String()
+	parsed.MetadataUserID = strings.Clone(fields.metadataUserID.String())
 
 	thinkingType := fields.thinkingType.String()
 	parsed.ThinkingEnabled = thinkingType == "enabled" || thinkingType == "adaptive" || thinkingType == "between_tools" ||
 		(protocol == domain.PlatformAnthropic && isClaude55SignedThinkingModel(parsed.Model) && thinkingType != "disabled")
 
-	parsed.OutputEffort = strings.TrimSpace(fields.outputEffort.String())
+	parsed.OutputEffort = strings.Clone(strings.TrimSpace(fields.outputEffort.String()))
 	if protocol == domain.PlatformAnthropic {
-		parsed.Speed = strings.ToLower(strings.TrimSpace(fields.speed.String()))
+		parsed.Speed = strings.Clone(strings.ToLower(strings.TrimSpace(fields.speed.String())))
 	}
 
 	if maxTokensResult := fields.maxTokens; maxTokensResult.Exists() && maxTokensResult.Type == gjson.Number {

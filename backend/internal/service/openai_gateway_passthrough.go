@@ -445,7 +445,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 				maxLineSize = s.cfg.Gateway.MaxLineSize
 			}
-			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+			resp.Body = newGrokResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize, s.cfg)
 		}
 
 		// x-codex-turn-state 溯源：下游回传由 writeOpenAIPassthroughResponseHeaders
@@ -2046,6 +2046,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
+	scanner.Split(newBoundedSSESplit(s.cfg, maxLineSize, nil))
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 

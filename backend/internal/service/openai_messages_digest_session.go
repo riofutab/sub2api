@@ -14,6 +14,13 @@ type openAICompatAnthropicDigestBinding struct {
 	ExpiresAt      time.Time
 }
 
+func (b openAICompatAnthropicDigestBinding) sessionExpiresAt() time.Time { return b.ExpiresAt }
+func (b openAICompatAnthropicDigestBinding) sessionCost() int            { return len(b.PromptCacheKey) }
+func (b openAICompatAnthropicDigestBinding) cloneSessionValue() sessionMemoryValue {
+	b.PromptCacheKey = strings.Clone(b.PromptCacheKey)
+	return b
+}
+
 func buildOpenAICompatAnthropicDigestChain(req *apicompat.AnthropicRequest) string {
 	if req == nil {
 		return ""
@@ -52,24 +59,12 @@ func (s *OpenAIGatewayService) findOpenAICompatAnthropicDigestPromptCacheKey(acc
 	if ns == "" {
 		return "", ""
 	}
-	chain := digestChain
-	for {
-		if raw, ok := s.openaiCompatAnthropicDigestSessions.Load(ns + chain); ok {
-			if binding, ok := raw.(openAICompatAnthropicDigestBinding); ok {
-				if binding.ExpiresAt.IsZero() || time.Now().Before(binding.ExpiresAt) {
-					if key := strings.TrimSpace(binding.PromptCacheKey); key != "" {
-						return key, chain
-					}
-				}
-			}
-			s.openaiCompatAnthropicDigestSessions.Delete(ns + chain)
+	if raw, chain, ok := s.openaiCompatAnthropicDigestSessions.longestDigestPrefix(ns, digestChain); ok {
+		if binding, ok := raw.(openAICompatAnthropicDigestBinding); ok {
+			return binding.PromptCacheKey, chain
 		}
-		i := strings.LastIndex(chain, "-")
-		if i < 0 {
-			return "", ""
-		}
-		chain = chain[:i]
 	}
+	return "", ""
 }
 
 func (s *OpenAIGatewayService) bindOpenAICompatAnthropicDigestPromptCacheKey(account *Account, cAPIKeyID int64, digestChain, promptCacheKey, oldDigestChain string) {
@@ -88,10 +83,6 @@ func (s *OpenAIGatewayService) bindOpenAICompatAnthropicDigestPromptCacheKey(acc
 	if oldDigestChain != "" && oldDigestChain != digestChain {
 		s.openaiCompatAnthropicDigestSessions.Delete(ns + oldDigestChain)
 	}
-	sweepExpiredSyncMapOnWrite(&s.openaiCompatAnthropicDigestWrites, &s.openaiCompatAnthropicDigestSessions, func(value any, now time.Time) bool {
-		b, ok := value.(openAICompatAnthropicDigestBinding)
-		return !ok || (!b.ExpiresAt.IsZero() && now.After(b.ExpiresAt))
-	})
 }
 
 func promptCacheKeyFromAnthropicDigest(digestChain string) string {
