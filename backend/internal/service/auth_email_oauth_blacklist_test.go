@@ -12,7 +12,7 @@ import (
 )
 
 func TestLoginOrRegisterVerifiedEmailOAuth_BlacklistedExistingUserCanStillSignIn(t *testing.T) {
-	svc, repo, _ := newAuthServiceForEmailBindWithRefreshCache(t, map[string]string{
+	svc, repo, client := newAuthServiceForEmailBindWithRefreshCache(t, map[string]string{
 		service.SettingKeyRegistrationEnabled:        "true",
 		service.SettingKeyRegistrationEmailBlacklist: `["kept.user@gmail.com"]`,
 	}, nil, nil, newEmailBindRefreshTokenCacheStub())
@@ -26,6 +26,8 @@ func TestLoginOrRegisterVerifiedEmailOAuth_BlacklistedExistingUserCanStillSignIn
 		Concurrency:  1,
 	}
 	require.NoError(t, repo.Create(ctx, existing))
+	// fork 只对第三方来源注册的账号自动绑定同邮箱 OAuth（上游 #7675），repo.Create 会把来源归一为 email。
+	require.NoError(t, client.User.UpdateOneID(existing.ID).SetSignupSource("github").Exec(ctx))
 
 	tokens, user, err := svc.LoginOrRegisterVerifiedEmailOAuth(ctx, service.EmailOAuthIdentityInput{
 		ProviderType:    "github",
