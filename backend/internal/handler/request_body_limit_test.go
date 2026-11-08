@@ -21,8 +21,15 @@ func TestRequestBodyLimitTooLarge(t *testing.T) {
 	router.POST("/test", func(c *gin.Context) {
 		_, err := io.ReadAll(c.Request.Body)
 		if err != nil {
-			status, message := requestBodyReadFailure(nil, c.Request, err)
-			c.JSON(status, gin.H{"error": message})
+			if maxErr, ok := extractMaxBytesError(err); ok {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": buildBodyTooLargeMessage(maxErr.Limit),
+				})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "read_failed",
+			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})

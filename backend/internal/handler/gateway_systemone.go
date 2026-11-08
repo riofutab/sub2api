@@ -93,8 +93,11 @@ func (h *GatewayHandler) systemOne(c *gin.Context, bridge bool) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
-		status, message := requestBodyReadFailure(reqLog, c.Request, err)
-		writeError(c, status, "invalid_request_error", message)
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			writeError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		writeError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
 	clientBody := body

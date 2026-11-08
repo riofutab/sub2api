@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -64,7 +63,6 @@ func (p *PrereadBody) Bytes() []byte {
 // client used to compress the body (zstd, gzip, deflate).
 // 已由 PrereadBody 回填的请求体直接返回其完整切片（零拷贝），不检查内部
 // reader 是否已被消费——见 PrereadBody 的文档说明。
-// 读取失败时返回 *RequestBodyReadError，携带已读字节数与耗时供诊断。
 func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 	if req == nil || req.Body == nil {
 		return nil, nil
@@ -85,10 +83,9 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 		}
 	}
 
-	startedAt := time.Now()
-	raw, bytesRead, err := readRequestBodyChunks(req.Body, capHint, req.ContentLength)
+	raw, err := readRequestBodyChunks(req.Body, capHint, req.ContentLength)
 	if err != nil {
-		return nil, &RequestBodyReadError{Err: err, BytesRead: bytesRead, Elapsed: time.Since(startedAt)}
+		return nil, err
 	}
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
@@ -111,8 +108,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
 // Read bounded chunks as bytes arrive, then assemble the exact-size result.
 // This avoids doubling large buffers or eagerly allocating an untrusted
 // Content-Length before the corresponding bytes have arrived.
-// The returned count is the number of bytes received, including on error.
-func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength int64) ([]byte, int64, error) {
+func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength int64) ([]byte, error) {
 	capacity := initialCapacity
 	var chunks [][]byte
 	total := 0
@@ -130,7 +126,7 @@ func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength 
 			n += read
 		}
 		if err != nil && err != io.EOF {
-			return nil, int64(total + n), err
+			return nil, err
 		}
 		if n > 0 {
 			chunks = append(chunks, chunk[:n])
@@ -138,17 +134,17 @@ func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength 
 		}
 		if err != nil {
 			if len(chunks) == 0 {
-				return chunk[:0], 0, nil
+				return chunk[:0], nil
 			}
 			if len(chunks) == 1 {
-				return chunks[0], int64(total), nil
+				return chunks[0], nil
 			}
 			body := make([]byte, total)
 			offset := 0
 			for _, part := range chunks {
 				offset += copy(body[offset:], part)
 			}
-			return body, int64(total), nil
+			return body, nil
 		}
 		if capacity < requestBodyReadMaxInitCap {
 			capacity *= 2
