@@ -130,8 +130,11 @@ func TestConvertClaudeMessagesToGeminiContents_PreservesExistingToolUseSignature
 	require.NoError(t, err)
 	require.Len(t, contents, 1)
 
-	modelTurn := contents[0].(map[string]any)
-	parts := modelTurn["parts"].([]any)
-	fnPart := parts[0].(map[string]any)
+	modelTurn, ok := contents[0].(map[string]any)
+	require.True(t, ok)
+	parts, ok := modelTurn["parts"].([]any)
+	require.True(t, ok)
+	fnPart, ok := parts[0].(map[string]any)
+	require.True(t, ok)
 	assert.Equal(t, "sig_direct_tool_use_555", fnPart["thoughtSignature"])
 }
