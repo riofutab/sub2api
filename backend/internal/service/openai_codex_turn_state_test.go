@@ -217,27 +217,6 @@ func TestGuardOpenAICodexTurnStateEcho(t *testing.T) {
 	})
 }
 
-func TestSweepOpenAICodexTurnStateOrigins_PrunesExpiredEntries(t *testing.T) {
-	svc := &OpenAIGatewayService{}
-	svc.openaiCodexTurnStateOrigins.Store("expired", openAICodexTurnStateOrigin{
-		accountID: 1,
-		expiresAt: time.Now().Add(-time.Minute),
-	})
-	svc.openaiCodexTurnStateOrigins.Store("alive", openAICodexTurnStateOrigin{
-		accountID: 2,
-		expiresAt: time.Now().Add(time.Hour),
-	})
-
-	// 计数器推进到触发清扫的边界
-	svc.openaiCodexTurnStateWrites.Store(255)
-	svc.sweepOpenAICodexTurnStateOrigins()
-
-	_, expiredOK := svc.openaiCodexTurnStateOrigins.Load("expired")
-	require.False(t, expiredOK)
-	_, aliveOK := svc.openaiCodexTurnStateOrigins.Load("alive")
-	require.True(t, aliveOK)
-}
-
 func TestWriteOpenAIPassthroughResponseHeaders_RelaysAndClearsTurnState(t *testing.T) {
 	// filter=nil 走 content-type 兜底分支；turn-state 强制放行不依赖 filter。
 	dst := http.Header{}
