@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +24,10 @@ type openAICodexTurnStateOrigin struct {
 	accountID int64
 	expiresAt time.Time
 }
+
+func (o openAICodexTurnStateOrigin) sessionExpiresAt() time.Time           { return o.expiresAt }
+func (o openAICodexTurnStateOrigin) sessionCost() int                      { return 0 }
+func (o openAICodexTurnStateOrigin) cloneSessionValue() sessionMemoryValue { return o }
 
 // openAICodexTurnStateSeed 返回溯源表键：API Key + 客户端原始会话标识。
 // 客户端会话标识取自请求头（与指纹收敛的 thread 派生同源，见
@@ -114,7 +116,6 @@ func (s *OpenAIGatewayService) noteOpenAICodexTurnStateProvenance(c *gin.Context
 		accountID: account.ID,
 		expiresAt: time.Now().Add(s.openAIWSSessionStickyTTL()),
 	})
-	s.sweepOpenAICodexTurnStateOrigins()
 }
 
 // guardOpenAICodexTurnStateEcho 出站守卫：客户端回带的 turn-state 若已知由
@@ -138,40 +139,9 @@ func (s *OpenAIGatewayService) guardOpenAICodexTurnStateEcho(c *gin.Context, acc
 	}
 	origin, ok := raw.(openAICodexTurnStateOrigin)
 	if !ok {
-		s.openaiCodexTurnStateOrigins.Delete(seed)
-		return
-	}
-	if !origin.expiresAt.IsZero() && time.Now().After(origin.expiresAt) {
-		s.openaiCodexTurnStateOrigins.Delete(seed)
 		return
 	}
 	if origin.accountID != account.ID {
 		h.Del(openAICodexTurnStateHeader)
 	}
-}
-
-// openAISessionMapSweepEvery 是会话类 sync.Map 机会式全量清扫的写入间隔。
-const openAISessionMapSweepEvery = 256
-
-// sweepExpiredSyncMapOnWrite 每 openAISessionMapSweepEvery 次写入全量遍历一轮，删除 expired 判定为过期
-// （或类型不符）的项，防止仅靠读侧惰性删除导致的慢泄漏（会话键无上界）。
-func sweepExpiredSyncMapOnWrite(writes *atomic.Uint64, m *sync.Map, expired func(value any, now time.Time) bool) {
-	if writes.Add(1)%openAISessionMapSweepEvery != 0 {
-		return
-	}
-	now := time.Now()
-	m.Range(func(key, value any) bool {
-		if expired(value, now) {
-			m.Delete(key)
-		}
-		return true
-	})
-}
-
-// sweepOpenAICodexTurnStateOrigins 机会式清扫过期溯源记录。
-func (s *OpenAIGatewayService) sweepOpenAICodexTurnStateOrigins() {
-	sweepExpiredSyncMapOnWrite(&s.openaiCodexTurnStateWrites, &s.openaiCodexTurnStateOrigins, func(value any, now time.Time) bool {
-		origin, ok := value.(openAICodexTurnStateOrigin)
-		return !ok || (!origin.expiresAt.IsZero() && now.After(origin.expiresAt))
-	})
 }

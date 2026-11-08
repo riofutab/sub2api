@@ -116,6 +116,26 @@ func TestLoadServerTimingConfig(t *testing.T) {
 	})
 }
 
+func TestLoadShutdownDrainTimeout(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Equal(t, 25, cfg.Server.ShutdownDrainTimeout)
+	})
+
+	t.Run("config file", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		configFile := filepath.Join(t.TempDir(), "shutdown-drain.yaml")
+		require.NoError(t, os.WriteFile(configFile, []byte("server:\n  shutdown_drain_timeout: 40\n"), 0o600))
+		t.Setenv("CONFIG_FILE", configFile)
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Equal(t, 40, cfg.Server.ShutdownDrainTimeout)
+	})
+}
+
 func TestLoadSimpleModeKeyRateLimitEnabledFromEnvironment(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("SIMPLE_MODE_KEY_RATE_LIMIT_ENABLED", "true")
@@ -1666,6 +1686,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "server.max_request_body_size",
 		},
 		{
+			name:    "server shutdown drain timeout",
+			mutate:  func(c *Config) { c.Server.ShutdownDrainTimeout = 0 },
+			wantErr: "server.shutdown_drain_timeout",
+		},
+		{
 			name: "h2c zero concurrent streams",
 			mutate: func(c *Config) {
 				c.Server.H2C.Enabled = true
@@ -2754,4 +2779,15 @@ func TestLoadSimpleModeAutoCreateDefaultGroups(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadAnthropicImageGuard(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.Gateway.AnthropicImageGuardEnabled)
+	t.Setenv("GATEWAY_ANTHROPIC_IMAGE_GUARD_ENABLED", "true")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.Gateway.AnthropicImageGuardEnabled)
 }

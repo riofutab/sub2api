@@ -1666,6 +1666,12 @@
         </div>
       </div>
 
+      <TransportErrorCooldownSettings
+        v-if="account?.platform === 'anthropic'"
+        v-model:enabled="transportErrorCooldownEnabled"
+        v-model:minutes="transportErrorCooldownMinutes"
+      />
+
       <!-- Temp Unschedulable Rules -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4">
         <div class="mb-3 flex items-center justify-between">
@@ -1677,6 +1683,7 @@
           </div>
           <button
             type="button"
+            data-testid="temp-unsched-toggle"
             @click="tempUnschedEnabled = !tempUnschedEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -1768,7 +1775,8 @@
                   <input
                     v-model.number="rule.duration_minutes"
                     type="number"
-                    min="1"
+                    min="0"
+                    data-testid="temp-unsched-duration"
                     class="input"
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                   />
@@ -3463,6 +3471,8 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import TransportErrorCooldownSettings from './TransportErrorCooldownSettings.vue'
+import { DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES, isValidTransportErrorCooldownMinutes, readTransportErrorCooldown } from './transportErrorCooldown'
 import OpenAIImageSizeTiersField from '@/components/account/OpenAIImageSizeTiersField.vue'
 import {
   OPENAI_IMAGE_SIZE_TIERS,
@@ -4149,6 +4159,8 @@ const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+const transportErrorCooldownEnabled = ref(true)
+const transportErrorCooldownMinutes = ref<number | string>(DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES)
 const upstreamRequestIdHeader = ref('')
 const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header
@@ -4705,6 +4717,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
+  const transportCooldown = readTransportErrorCooldown(extra)
+  transportErrorCooldownEnabled.value = transportCooldown.enabled
+  transportErrorCooldownMinutes.value = transportCooldown.minutes
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
 	openAIImageSizeTiers.value = readOpenAIImageSizeTiers(extra)
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
@@ -5319,7 +5334,7 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
     if (!Number.isFinite(errorCode) || errorCode < 100 || errorCode > 599) {
       continue
     }
-    if (!Number.isFinite(duration) || duration <= 0) {
+    if (typeof rule.duration_minutes !== 'number' || !Number.isInteger(duration) || duration < 0) {
       continue
     }
     if (keywords.length === 0) {
@@ -5432,7 +5447,7 @@ function loadTempUnschedRules(credentials?: Record<string, unknown>) {
     return {
       error_code: errorCode,
       keywords: formatTempUnschedKeywords(entry.keywords),
-      duration_minutes: toPositiveNumber(entry.duration_minutes),
+      duration_minutes: toTempUnschedDuration(entry.duration_minutes),
       description: typeof entry.description === 'string' ? entry.description : '',
       scope: resolveTempUnschedScope(entry.scope, errorCode)
     }
@@ -5550,6 +5565,13 @@ const splitTempUnschedKeywords = (value: string) => {
     .split(/[,;]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+}
+
+function toTempUnschedDuration(value: unknown) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  const num = Number(value)
+  return Number.isInteger(num) && num >= 0 ? num : null
 }
 
 function toPositiveNumber(value: unknown) {
@@ -5718,6 +5740,12 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
 const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
+
+  if (props.account.platform === 'anthropic' && transportErrorCooldownEnabled.value &&
+      !isValidTransportErrorCooldownMinutes(transportErrorCooldownMinutes.value)) {
+    appStore.showError(t('admin.accounts.transportErrorCooldown.invalidMinutes'))
+    return
+  }
 
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
@@ -6482,6 +6510,17 @@ const handleSubmit = async () => {
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'anthropic') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || props.account.extra || {}
+      updatePayload.extra = {
+        ...currentExtra,
+        transport_error_cooldown_enabled: transportErrorCooldownEnabled.value,
+        transport_error_cooldown_minutes: isValidTransportErrorCooldownMinutes(transportErrorCooldownMinutes.value)
+          ? transportErrorCooldownMinutes.value
+          : DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES
+      }
     }
 
     // 上游ID头名只在改动时写回 extra，避免用弹窗打开时的快照覆盖运行态键。

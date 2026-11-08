@@ -21,6 +21,8 @@ export interface IntervalFormEntry {
 }
 
 export interface PricingFormEntry {
+  // 只在前端用作列表 key，保存时按字段映射，不会提交给后端。
+  uiKey: string
   models: string[]
   billing_mode: BillingMode
   input_price: number | string | null
@@ -69,6 +71,13 @@ export const COMMON_TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
   'America/Toronto', 'America/Sao_Paulo', 'Pacific/Auckland', 'Pacific/Honolulu',
 ]
+
+let pricingUiKeySeq = 0
+
+export function createPricingUiKey(): string {
+  pricingUiKeySeq += 1
+  return `pricing-${pricingUiKeySeq}`
+}
 
 export function createDefaultTimePricingForm(): TimePricingFormEntry {
   return { timezone: DEFAULT_TIME_PRICING_TIMEZONE, weekdays_only: false, periods: [] }

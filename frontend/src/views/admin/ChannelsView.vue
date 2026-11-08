@@ -445,7 +445,7 @@
               <div v-else class="space-y-2">
                 <PricingEntryCard
                   v-for="(entry, idx) in section.model_pricing"
-                  :key="idx"
+                  :key="entry.uiKey"
                   :entry="entry"
                   :platform="section.platform"
                   enable-time-pricing
@@ -577,7 +577,7 @@
                   <div v-else class="space-y-2">
                     <PricingEntryCard
                       v-for="(entry, pIdx) in rule.pricing"
-                      :key="pIdx"
+                      :key="entry.uiKey"
                       :entry="entry"
                       :platform="section.platform"
                       @update="rule.pricing.splice(pIdx, 1, $event)"
@@ -635,7 +635,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import type { Channel, ChannelModelPricing, CreateChannelRequest, UpdateChannelRequest, AccountStatsPricingRule } from '@/api/admin/channels'
 import type { PricingFormEntry } from '@/components/admin/channel/types'
-import { apiIntervalsToForm, apiTimePricingToForm, createDefaultTimePricingForm, findModelConflict, formIntervalsToAPI, formReasoningEffortMultipliersToAPI, formTimePricingToAPI, isValidPositiveMultiplier, mTokToPerToken, perTokenToMTok, validateIntervals, validateReasoningEffortMultipliers, validateTimePricing } from '@/components/admin/channel/types'
+import { apiIntervalsToForm, apiTimePricingToForm, createDefaultTimePricingForm, createPricingUiKey, findModelConflict, formIntervalsToAPI, formReasoningEffortMultipliersToAPI, formTimePricingToAPI, isValidPositiveMultiplier, mTokToPerToken, perTokenToMTok, validateIntervals, validateReasoningEffortMultipliers, validateTimePricing } from '@/components/admin/channel/types'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import { platformTextClass, platformBadgeLightClass, platformLabel as catalogPlatformLabel } from '@/utils/platformColors'
@@ -873,6 +873,7 @@ function toggleGroupInSection(sectionIdx: number, groupId: number) {
 // ── Pricing helpers ──
 function addPricingEntry(sectionIdx: number) {
   form.platforms[sectionIdx].model_pricing.push({
+    uiKey: createPricingUiKey(),
     models: [],
     billing_mode: 'token',
     input_price: null,
@@ -912,6 +913,7 @@ async function syncLatestModels(sectionIdx: number) {
     }
     // Add new models as a single new pricing entry (user fills in prices)
     section.model_pricing.push({
+      uiKey: createPricingUiKey(),
       models: newModels,
       billing_mode: 'token',
       input_price: null,
@@ -982,6 +984,7 @@ function addAccountStatsRule(sectionIdx: number) {
 
 function addRulePricingEntry(sectionIdx: number, ruleIndex: number) {
   form.platforms[sectionIdx].account_stats_pricing_rules[ruleIndex].pricing.push({
+    uiKey: createPricingUiKey(),
     models: [],
     billing_mode: 'token',
     input_price: null,
@@ -1245,6 +1248,7 @@ function apiToForm(channel: Channel): PlatformSection[] {
     const pricing = (channel.model_pricing || [])
       .filter(p => (p.platform || 'anthropic') === platform)
       .map(p => ({
+        uiKey: createPricingUiKey(),
         models: p.models || [],
         billing_mode: p.billing_mode,
         input_price: perTokenToMTok(p.input_price),
@@ -1439,6 +1443,7 @@ function distributeRulesToPlatforms(apiRules: AccountStatsPricingRule[]) {
       group_ids: [...(apiRule.group_ids || [])],
       account_ids: [...(apiRule.account_ids || [])],
       pricing: (apiRule.pricing || []).map(p => ({
+        uiKey: createPricingUiKey(),
         models: [...(p.models || [])],
         billing_mode: p.billing_mode,
         input_price: perTokenToMTok(p.input_price),

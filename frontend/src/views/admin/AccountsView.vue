@@ -191,12 +191,12 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden" :aria-busy="loading" :inert="loading && accounts.length > 0">
         <DataTable
           ref="dataTableRef"
           :columns="cols"
           :data="accounts"
-          :loading="loading"
+          :loading="loading && accounts.length === 0"
           row-key="id"
           :server-side-sort="true"
           @sort="handleSort"
@@ -1315,7 +1315,8 @@ const refreshUpstreamBillingSortedList = async (force = false) => {
   await refreshUpstreamBillingRates(force)
 }
 
-useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000, { immediate: false })
+// 不能传 immediate:false：useIntervalFn 会因此不启动，且这里没有调用 resume()。
+useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000)
 
 const saveAccountFilterValues = () => {
   try {

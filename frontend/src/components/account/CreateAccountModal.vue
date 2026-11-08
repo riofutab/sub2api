@@ -2626,6 +2626,12 @@
         </template>
       </div>
 
+      <TransportErrorCooldownSettings
+        v-if="form.platform === 'anthropic'"
+        v-model:enabled="transportErrorCooldownEnabled"
+        v-model:minutes="transportErrorCooldownMinutes"
+      />
+
       <!-- Temp Unschedulable Rules -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4">
         <div class="mb-3 flex items-center justify-between">
@@ -2637,6 +2643,7 @@
           </div>
           <button
             type="button"
+            data-testid="temp-unsched-toggle"
             @click="tempUnschedEnabled = !tempUnschedEnabled"
             :class="[
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
@@ -2728,7 +2735,8 @@
                   <input
                     v-model.number="rule.duration_minutes"
                     type="number"
-                    min="1"
+                    min="0"
+                    data-testid="temp-unsched-duration"
                     class="input"
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                   />
@@ -4171,6 +4179,8 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import TransportErrorCooldownSettings from './TransportErrorCooldownSettings.vue'
+import { DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES, isValidTransportErrorCooldownMinutes } from './transportErrorCooldown'
 import OpenAIImageSizeTiersField from '@/components/account/OpenAIImageSizeTiersField.vue'
 import {
   OPENAI_IMAGE_SIZE_TIERS,
@@ -4269,6 +4279,21 @@ const oauthStepTitle = computed(() => {
 
 // Platform-specific hints for API Key type
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+const transportErrorCooldownEnabled = ref(true)
+const transportErrorCooldownMinutes = ref<number | string>(DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES)
+const withTransportErrorCooldown = (extra?: Record<string, unknown>, platform = form.platform) => {
+  if (platform !== 'anthropic') return extra
+  if (transportErrorCooldownEnabled.value && !isValidTransportErrorCooldownMinutes(transportErrorCooldownMinutes.value)) {
+    throw new Error(t('admin.accounts.transportErrorCooldown.invalidMinutes'))
+  }
+  return {
+    ...(extra || {}),
+    transport_error_cooldown_enabled: transportErrorCooldownEnabled.value,
+    transport_error_cooldown_minutes: isValidTransportErrorCooldownMinutes(transportErrorCooldownMinutes.value)
+      ? transportErrorCooldownMinutes.value
+      : DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES
+  }
+}
 const upstreamRequestIdHeader = ref('')
 const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
   const name = upstreamRequestIdHeader.value.trim()
@@ -5464,7 +5489,7 @@ const buildTempUnschedRules = (rules: TempUnschedRuleForm[]) => {
     if (!Number.isFinite(errorCode) || errorCode < 100 || errorCode > 599) {
       continue
     }
-    if (!Number.isFinite(duration) || duration <= 0) {
+    if (typeof rule.duration_minutes !== 'number' || !Number.isInteger(duration) || duration < 0) {
       continue
     }
     if (keywords.length === 0) {
@@ -5661,6 +5686,8 @@ const resetForm = () => {
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   upstreamRequestIdHeader.value = ''
+  transportErrorCooldownEnabled.value = true
+  transportErrorCooldownMinutes.value = DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
@@ -5881,6 +5908,12 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
 
 // Helper function to create account with mixed channel warning handling
 const doCreateAccount = async (payload: CreateAccountRequest) => {
+  try {
+    payload.extra = withTransportErrorCooldown(payload.extra, payload.platform)
+  } catch {
+    appStore.showError(t('admin.accounts.transportErrorCooldown.invalidMinutes'))
+    return
+  }
   const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {
     await submitCreateAccount(payload)
   })
@@ -7479,7 +7512,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withTransportErrorCooldown(withUpstreamRequestIdHeader(extra)),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

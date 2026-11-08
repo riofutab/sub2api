@@ -36,6 +36,10 @@ server:
   # Keep-alive idle timeout in seconds.
   # Keep-Alive 空闲连接超时（秒）。
   idle_timeout: 120
+  # Time budget for draining in-flight requests on shutdown, in seconds.
+  # When it expires, remaining connections are force-closed so the process can exit.
+  # 优雅停机时等待在途请求完成的时长上限（秒）；超时后强制关闭剩余连接，保证进程按时退出。
+  shutdown_drain_timeout: 25
   # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
   # Set [] explicitly to disable forwarded-IP trust in high-security mode.
@@ -321,6 +325,10 @@ gateway:
   # 默认 false：保持纯文本 Codex 请求不被改写；客户端显式提供 image_generation tool 时，
   # 仍会在分组允许图片生成的情况下正常转发。
   codex_image_generation_bridge_enabled: false
+  # Opt-in Anthropic wire-image protection, including historical tool results.
+  # Caps inline images at 3000px; rejects uninspectable sources/unsafe decodes.
+  # See docs/anthropic-image-guard.md for scope, limits and tradeoffs.
+  anthropic_image_guard_enabled: false
   # Optional: template file used to build the final top-level Codex `instructions`.
   # 可选：用于构建最终 Codex 顶层 `instructions` 的模板文件路径。
   #
