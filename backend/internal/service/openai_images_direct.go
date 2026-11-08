@@ -33,8 +33,20 @@ func isOpenAIImagesForceResponses(ctx context.Context) bool {
 func usesCodexDirectImages(model string) bool {
 	switch strings.TrimSpace(model) {
 	case "gpt-image-1.5", "gpt-image-2",
+		"gpt-image-2.6-flare", "gpt-image-2.6-sunburst",
 		"gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
 		"gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08":
+		return true
+	default:
+		return false
+	}
+}
+
+// Codex Responses binds image_generation to an internal model and cannot
+// preserve the requested 2.6 model. Do not fall back to that bridge for 2.6.
+func requiresCodexDirectImages(model string) bool {
+	switch strings.TrimSpace(model) {
+	case "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
 		return true
 	default:
 		return false
@@ -67,7 +79,7 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 		key   string
 		value string
 	}{
-		{"size", parsed.Size}, {"quality", parsed.Quality},
+		{"size", parsed.Size}, {"quality", parsed.Quality}, {"complexity", parsed.Complexity},
 		{"background", parsed.Background}, {"output_format", parsed.OutputFormat},
 		{"moderation", parsed.Moderation}, {"input_fidelity", parsed.InputFidelity},
 		{"style", parsed.Style},
@@ -84,6 +96,15 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 	}
 	if parsed.PartialImages != nil {
 		payload["partial_images"] = *parsed.PartialImages
+	}
+	if parsed.FrameCount != nil {
+		payload["frame_count"] = *parsed.FrameCount
+	}
+	if parsed.FrameDurationMS != nil {
+		payload["frame_duration_ms"] = *parsed.FrameDurationMS
+	}
+	if parsed.SVG != nil {
+		payload["svg"] = parsed.SVG
 	}
 	if parsed.Stream {
 		payload["stream"] = true
@@ -119,6 +140,17 @@ func buildOpenAIImagesOAuthPayload(parsed *OpenAIImagesRequest, model string) ([
 		}
 		if mask != "" {
 			payload["mask"] = map[string]string{"image_url": mask}
+		}
+		markup := strings.TrimSpace(parsed.MarkupImageURL)
+		if parsed.MarkupUpload != nil {
+			var err error
+			markup, err = openAIImageUploadToDataURL(*parsed.MarkupUpload)
+			if err != nil {
+				return nil, "", err
+			}
+		}
+		if markup != "" {
+			payload["markup"] = map[string]string{"image_url": markup}
 		}
 	}
 	body, err := json.Marshal(payload)
@@ -226,8 +258,13 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesJSONAsStream(
 	eventName := openAIImagesStreamPrefix(parsed) + ".completed"
 	createdAt := gjson.GetBytes(body, "created").Int()
 	usageRaw := []byte(gjson.GetBytes(body, "usage").Raw)
-	for _, img := range results {
-		payload := buildOpenAIImagesStreamCompletedPayload(eventName, img, parsed.ResponseFormat, createdAt, usageRaw)
+	for i, img := range results {
+		// Usage covers the whole request; repeating it per image would make clients count it n times.
+		var eventUsage []byte
+		if i == len(results)-1 {
+			eventUsage = usageRaw
+		}
+		payload := buildOpenAIImagesStreamCompletedPayload(eventName, img, parsed.ResponseFormat, createdAt, eventUsage)
 		if err := s.writeOpenAIImagesStreamEvent(c, flusher, eventName, payload); err != nil {
 			// The upstream already produced the images; keep them billable.
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images stream client disconnected while relaying JSON response")
