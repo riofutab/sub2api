@@ -585,7 +585,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = strings.TrimSuffix(normalizedBaseURL, "/") + "/v1/messages?beta=true"
+		apiURL = buildAnthropicMessagesURL(normalizedBaseURL)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -3098,6 +3098,9 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 		"prompt": prompt,
 		"n":      1,
 	}
+	if size := account.OpenAIImageTestSize(); size != "" {
+		payload["size"] = size
+	}
 	payloadBytes, _ := json.Marshal(payload)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
@@ -3194,7 +3197,9 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 		Endpoint: openAIImagesGenerationsEndpoint,
 		Model:    strings.TrimSpace(modelID),
 		Prompt:   prompt,
+		Size:     account.OpenAIImageTestSize(),
 	}
+	parsed.ExplicitSize = parsed.Size != ""
 	applyOpenAIImagesDefaults(parsed)
 
 	upstreamModel := account.GetMappedModel(parsed.Model)

@@ -15,6 +15,16 @@ type openAICompatSessionResponseBinding struct {
 	ExpiresAt  time.Time
 }
 
+func (b openAICompatSessionResponseBinding) sessionExpiresAt() time.Time { return b.ExpiresAt }
+func (b openAICompatSessionResponseBinding) sessionCost() int {
+	return len(b.ResponseID) + len(b.TurnState)
+}
+func (b openAICompatSessionResponseBinding) cloneSessionValue() sessionMemoryValue {
+	b.ResponseID = strings.Clone(b.ResponseID)
+	b.TurnState = strings.Clone(b.TurnState)
+	return b
+}
+
 func openAICompatSessionResponseKey(c *gin.Context, account *Account, promptCacheKey string) string {
 	key := strings.TrimSpace(promptCacheKey)
 	if account == nil || key == "" {
@@ -49,7 +59,7 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionResponseID(_ context.Conte
 			binding.TurnState = existing.TurnState
 		}
 	}
-	s.storeOpenAICompatSessionResponse(key, binding)
+	s.openaiCompatSessionResponses.Store(key, binding)
 }
 
 func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
@@ -93,14 +103,5 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionTurnState(_ context.Contex
 			binding.ResponseID = existing.ResponseID
 		}
 	}
-	s.storeOpenAICompatSessionResponse(key, binding)
-}
-
-// storeOpenAICompatSessionResponse 写入续链绑定并触发机会式过期清扫。
-func (s *OpenAIGatewayService) storeOpenAICompatSessionResponse(key string, binding openAICompatSessionResponseBinding) {
 	s.openaiCompatSessionResponses.Store(key, binding)
-	sweepExpiredSyncMapOnWrite(&s.openaiCompatSessionResponseWrites, &s.openaiCompatSessionResponses, func(value any, now time.Time) bool {
-		b, ok := value.(openAICompatSessionResponseBinding)
-		return !ok || (!b.ExpiresAt.IsZero() && now.After(b.ExpiresAt))
-	})
 }

@@ -93,6 +93,9 @@ func (h *GatewayHandler) systemOne(c *gin.Context, bridge bool) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
+		if handleRequestBodyReadError(c, reqLog, err) {
+			return
+		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)
 		writeError(c, status, "invalid_request_error", message)
 		return
@@ -346,9 +349,12 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 		usageFields.OriginalModel = openai_decisions.Model
 	}
 
+	// An interior pointer into SystemOneForwardResult would also retain its
+	// response body while usage waits in the queue. Copy only billing metadata.
+	forwardResult := result.ForwardResult
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-			Result:             &result.ForwardResult,
+			Result:             &forwardResult,
 			APIKey:             apiKey,
 			User:               apiKey.User,
 			Account:            account,

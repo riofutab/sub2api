@@ -147,7 +147,7 @@ func TestFilterThinkingBlocksInternal_MatchesMapPath(t *testing.T) {
 	for _, tc := range thinkingFilterCases {
 		for _, alwaysThinking := range []bool{false, true} {
 			body := []byte(tc.body)
-			want := filterThinkingBlocksSlow(body, alwaysThinking)
+			want := filterThinkingBlocksDecoded(body, alwaysThinking)
 			got := filterThinkingBlocksInternal(body, alwaysThinking)
 			require.Equal(t, string(want), string(got), "case=%s alwaysThinking=%v", tc.name, alwaysThinking)
 			changed := string(got) != tc.body
@@ -180,6 +180,6 @@ func TestFilterThinkingBlocks_MissingSignatureStillFilteredOnLargeBody(t *testin
 	broken = append(broken, '}')
 
 	out := FilterThinkingBlocks(broken, benchAnthropicChainModel)
-	require.Equal(t, string(filterThinkingBlocksSlow(broken, false)), string(out))
+	require.Equal(t, string(filterThinkingBlocksDecoded(broken, false)), string(out))
 	require.NotContains(t, string(out), "no sig")
 }

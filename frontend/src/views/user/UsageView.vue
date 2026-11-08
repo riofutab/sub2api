@@ -635,6 +635,26 @@ const escapeCSVValue = (value: unknown): string => {
   return str
 }
 
+const EXPORT_RATE_LIMIT_MAX_RETRIES = 3
+const EXPORT_RATE_LIMIT_MAX_WAIT_SECONDS = 60
+
+// 导出逐页请求计入按用户的重查询限流；429 时按 Retry-After 等待后重试同一页。
+const queryExportPage = async (params: UsageQueryParams) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await usageAPI.query(params)
+    } catch (error: any) {
+      if (error?.status !== 429 || attempt >= EXPORT_RATE_LIMIT_MAX_RETRIES) throw error
+      const waitSeconds = Math.min(
+        Math.max(error.retry_after_seconds ?? EXPORT_RATE_LIMIT_MAX_WAIT_SECONDS, 1),
+        EXPORT_RATE_LIMIT_MAX_WAIT_SECONDS
+      )
+      appStore.showInfo(t('usage.exportRateLimited', { seconds: waitSeconds }))
+      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000))
+    }
+  }
+}
+
 const exportToCSV = async () => {
   if (pagination.total === 0) {
     appStore.showWarning(t('usage.noDataToExport'))
@@ -646,12 +666,12 @@ const exportToCSV = async () => {
     const allLogs: UsageLog[] = []
     const exportParams = buildUsageListParams(1, EXPORT_PAGE_SIZE)
     // 只有第一页让后端做精确 COUNT，后续页带 skip_total 跳过 COUNT，总页数以第一页的 total 为准。
-    const firstPage = await usageAPI.query(exportParams)
+    const firstPage = await queryExportPage(exportParams)
     allLogs.push(...firstPage.items)
     const totalPages = Math.ceil(firstPage.total / EXPORT_PAGE_SIZE)
     for (let page = 2; page <= totalPages; page++) {
       const pageParams: UsageQueryParams & { skip_total: boolean } = { ...exportParams, page, skip_total: true }
-      const response = await usageAPI.query(pageParams)
+      const response = await queryExportPage(pageParams)
       allLogs.push(...response.items)
       if (response.items.length < EXPORT_PAGE_SIZE) break
     }

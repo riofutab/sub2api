@@ -66,6 +66,9 @@ func (h *OpenAIGatewayHandler) decisions(c *gin.Context, bridge bool) {
 	}
 	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
+		if handleRequestBodyReadError(c, reqLog, err) {
+			return
+		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)
 		writeError(c, status, "invalid_request_error", message)
 		return

@@ -316,6 +316,8 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.GET("/:id/rpm-status", h.Admin.User.GetUserRPMStatus)
 		users.POST("/batch-concurrency", h.Admin.User.BatchUpdateConcurrency)
 		users.POST("/batch-limits", h.Admin.User.BatchUpdateLimits)
+		users.POST("/batch-disable", h.Admin.User.BatchDisable)
+		users.POST("/blacklist-matches", h.Admin.User.FindBlacklistedEmailUsers)
 		users.GET("/:id/platform-quotas", h.Admin.User.GetUserPlatformQuotas)
 		users.PUT("/:id/platform-quotas", h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", h.Admin.User.ResetUserPlatformQuotaWindow)
@@ -596,6 +598,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		adminSettings.PUT("/openai-images-oauth-unavailable-cooldown", h.Admin.Setting.UpdateOpenAIImagesOAuthUnavailableCooldownSettings)
 		adminSettings.GET("/openai-403-cooldown", h.Admin.Setting.GetOpenAI403CooldownSettings)
 		adminSettings.PUT("/openai-403-cooldown", h.Admin.Setting.UpdateOpenAI403CooldownSettings)
+		// 注册邮箱精确黑名单
+		adminSettings.GET("/registration-email-blacklist", h.Admin.Setting.GetRegistrationEmailBlacklist)
+		adminSettings.PUT("/registration-email-blacklist", h.Admin.Setting.UpdateRegistrationEmailBlacklist)
 		// 面板 API 限流配置
 		adminSettings.GET("/panel-rate-limit", h.Admin.Setting.GetPanelRateLimitSettings)
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
