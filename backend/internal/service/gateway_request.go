@@ -723,10 +723,11 @@ func StripEmptyTextBlocks(body []byte) []byte {
 	return out
 }
 
-// isClaude55SignedThinkingModel identifies models whose default thinking mode
-// requires signed history to survive protocol conversion and request filtering.
+// isClaude55SignedThinkingModel identifies models (the 5.5 models and
+// Fable/Mythos 5.2) whose default thinking mode requires signed history to
+// survive protocol conversion and request filtering.
 func isClaude55SignedThinkingModel(model string) bool {
-	return claude.IsClaude55(model)
+	return claude.IsAdaptiveThinkingModel(model)
 }
 
 // validateClaude55Request rejects settings that the upstream cannot honor.
@@ -739,15 +740,24 @@ func validateClaude55Request(body []byte, model string) error {
 		return validateHaiku55Request(body)
 	}
 	isSonnet55 := claude.IsSonnet55(model)
+	modelName := "claude-opus-5-5"
+	switch {
+	case isSonnet55:
+		modelName = "claude-sonnet-5-5"
+	case claude.IsFable52(model):
+		modelName = "claude-fable-5-2"
+	case claude.IsMythos52(model):
+		modelName = "claude-mythos-5-2"
+	}
 	switch gjson.GetBytes(body, "thinking.type").String() {
 	case "disabled", "enabled":
 		if isSonnet55 {
 			return fmt.Errorf("claude-sonnet-5-5 requires adaptive thinking or thinking.type=between_tools; omit thinking or use one of those modes")
 		}
-		return fmt.Errorf("claude-opus-5-5 requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort")
+		return fmt.Errorf("%s requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort", modelName)
 	case "between_tools":
 		if !isSonnet55 {
-			return fmt.Errorf("claude-opus-5-5 requires adaptive thinking; thinking.type=between_tools is unsupported")
+			return fmt.Errorf("%s requires adaptive thinking; thinking.type=between_tools is unsupported", modelName)
 		}
 		effort := gjson.GetBytes(body, "output_config.effort").String()
 		if effort == "xhigh" || effort == "max" {
@@ -759,10 +769,6 @@ func validateClaude55Request(body []byte, model string) error {
 			}
 		}
 	}
-	modelName := "claude-opus-5-5"
-	if isSonnet55 {
-		modelName = "claude-sonnet-5-5"
-	}
 	if gjson.GetBytes(body, "tool_choice").String() == "required" {
 		return fmt.Errorf("%s does not support forced tool_choice; use auto or none", modelName)
 	}
@@ -772,6 +778,9 @@ func validateClaude55Request(body []byte, model string) error {
 	}
 	if isSonnet55 {
 		return validateClaude55DefaultSampling(body, modelName)
+	}
+	if claude.IsFable52(model) || claude.IsMythos52(model) {
+		return validateStrictTopPSampling(body, modelName)
 	}
 	return nil
 }
@@ -794,8 +803,13 @@ func validateHaiku55Request(body []byte) error {
 			return fmt.Errorf("%s thinking.type=disabled does not support thinking.block_binding", modelName)
 		}
 	}
-	// Haiku 5.5 is stricter than Sonnet 5.5: top_p must be exactly 0.99 and
-	// temperature and top_p cannot be sent together.
+	return validateStrictTopPSampling(body, modelName)
+}
+
+// validateStrictTopPSampling covers Haiku 5.5 and Fable/Mythos 5.2, which are
+// stricter than Sonnet 5.5: top_p must be exactly 0.99 and temperature and
+// top_p cannot be sent together.
+func validateStrictTopPSampling(body []byte, modelName string) error {
 	topP := gjson.GetBytes(body, "top_p")
 	if topP.Exists() && gjson.GetBytes(body, "temperature").Exists() {
 		return fmt.Errorf("%s does not allow temperature and top_p together; omit both", modelName)
