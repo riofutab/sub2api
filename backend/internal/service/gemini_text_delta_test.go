@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,14 +53,23 @@ func TestGeminiTextDeltaIncrementalAllocationsStayLinear(t *testing.T) {
 	if runAllocationTestInSubprocess(t) {
 		return
 	}
-	chunk := strings.Repeat("x", 100)
 	const chunks = 2000
+	inputs := make([]string, chunks)
+	for i := range inputs {
+		// Repeating the same chunk exercises duplicate suppression instead of
+		// growing the buffer. A unique prefix makes every chunk incremental.
+		inputs[i] = fmt.Sprintf("%04d:%s", i, strings.Repeat("x", 95))
+	}
+	want := strings.Join(inputs, "")
+	var got string
 	allocs := testing.AllocsPerRun(5, func() {
 		var state geminiTextDelta
-		for i := 0; i < chunks; i++ {
+		for _, chunk := range inputs {
 			_ = state.next(chunk)
 		}
+		got = state.seen.String()
 	})
+	require.Equal(t, want, got, "all incremental chunks must be retained")
 	// Concatenation allocates once per chunk; amortized growth needs O(log n).
 	require.Less(t, allocs, float64(100), "allocs per stream: %v", allocs)
 }
