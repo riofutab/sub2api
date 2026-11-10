@@ -409,7 +409,9 @@ func prepareOpenAIInputTokensCountRequest(
 	// Match the generation path: reasoning replay depends on the target model,
 	// not the client alias that was mapped to it.
 	anthropicReq.Model = upstreamModel
-	responsesReq, err := apicompat.AnthropicToResponses(&anthropicReq)
+	responsesReq, err := apicompat.AnthropicToResponsesWithOptions(&anthropicReq, apicompat.AnthropicToResponsesOptions{
+		DeferReasoningEffortValidation: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("convert anthropic request to responses: %w", err)
 	}

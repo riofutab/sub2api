@@ -2750,8 +2750,6 @@ func supportsOpenAIReasoningEffortMax(model string) bool {
 	}
 }
 
-// validateGPT61CompatRequest runs after model mapping, before conversion can
-// discard unsupported explicit effort selections or disabled thinking.
 func hasEffectiveGPT61CompatEffort(body []byte) bool {
 	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
 		effort := gjson.GetBytes(body, path)
@@ -2763,7 +2761,19 @@ func hasEffectiveGPT61CompatEffort(body []byte) bool {
 	return outputEffort.Type == gjson.String && outputEffort.String() != ""
 }
 
+// validateGPT61CompatRequest validates the converted request after model
+// mapping and reasoning effort policy application.
 func validateGPT61CompatRequest(body []byte, model string) error {
+	if err := validateGPT61RawEffort(body, model); err != nil {
+		return err
+	}
+	if gjson.GetBytes(body, "thinking.type").String() == "disabled" {
+		return openai.ValidateGPT61ReasoningEffort(model, "none")
+	}
+	return nil
+}
+
+func validateGPT61RawEffort(body []byte, model string) error {
 	if !openai.IsGPT61SolModelSpelling(model) && !openai.IsGPT61TerraModelSpelling(model) {
 		return nil
 	}
@@ -2771,9 +2781,6 @@ func validateGPT61CompatRequest(body []byte, model string) error {
 		if err := openai.ValidateGPT61ReasoningEffort(model, gjson.GetBytes(body, path).String()); err != nil {
 			return err
 		}
-	}
-	if gjson.GetBytes(body, "thinking.type").String() == "disabled" {
-		return openai.ValidateGPT61ReasoningEffort(model, "none")
 	}
 	// Only a canonical GPT-6.1 effort alias can supply an implicit effort.
 	// Arbitrary client aliases (for example "public-none") may map to this
