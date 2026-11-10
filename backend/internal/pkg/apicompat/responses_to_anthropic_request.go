@@ -17,7 +17,9 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 	isOpus55 := claude.IsOpus55(req.Model)
 	isSonnet55 := claude.IsSonnet55(req.Model)
 	isHaiku55 := claude.IsHaiku55(req.Model)
-	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, isOpus55 || isSonnet55 || isHaiku55 || IsSignedThinkingModel(req.Model))
+	isFableOrMythos52 := claude.IsFable52(req.Model) || claude.IsMythos52(req.Model)
+	isAdaptiveModel := isOpus55 || isSonnet55 || isHaiku55 || isFableOrMythos52
+	system, messages, err := convertResponsesInputToAnthropic(req.Instructions, req.Input, isAdaptiveModel || IsSignedThinkingModel(req.Model))
 	if err != nil {
 		return nil, err
 	}
@@ -57,12 +59,13 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 		out.ToolChoice = tc
 	}
 
-	// The 5.5 models reject manual thinking, and Opus/Sonnet 5.5 also reject
-	// forced tool use. Sonnet 5.5 additionally supports between_tools and
-	// Haiku 5.5 supports disabled thinking to skip up-front thinking.
+	// The 5.5 models and Fable/Mythos 5.2 reject manual thinking; all but
+	// Haiku 5.5 also reject forced tool use. Sonnet 5.5 additionally supports
+	// between_tools and Haiku 5.5 supports disabled thinking to skip up-front
+	// thinking. Haiku 5.5 and Fable/Mythos 5.2 only accept top_p=0.99.
 	// Resolve the upstream model before conversion: client aliases need not
 	// identify a Claude model.
-	if isOpus55 || isSonnet55 || isHaiku55 {
+	if isAdaptiveModel {
 		var choice struct {
 			Type string `json:"type"`
 		}
@@ -75,10 +78,10 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 			return nil, fmt.Errorf("%s does not support forced tool_choice; use auto or none", req.Model)
 		}
 		effort := "medium"
-		if isSonnet55 {
+		if isSonnet55 || isFableOrMythos52 {
 			effort = "high"
 		}
-		if isSonnet55 || isHaiku55 {
+		if isSonnet55 || isHaiku55 || isFableOrMythos52 {
 			if req.Temperature != nil && *req.Temperature != 1 {
 				return nil, fmt.Errorf("%s does not support non-default temperature", req.Model)
 			}
@@ -86,7 +89,7 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 				return nil, fmt.Errorf("%s does not support non-default top_p", req.Model)
 			}
 		}
-		if isHaiku55 && req.TopP != nil {
+		if (isHaiku55 || isFableOrMythos52) && req.TopP != nil {
 			if req.Temperature != nil {
 				return nil, fmt.Errorf("%s does not allow temperature and top_p together; omit both", req.Model)
 			}

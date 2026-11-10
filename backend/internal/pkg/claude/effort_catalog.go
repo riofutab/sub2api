@@ -67,6 +67,22 @@ func IsClaude55(model string) bool {
 	return false
 }
 
+// IsFable52 identifies the Fable 5.2 model after provider/suffix normalization.
+func IsFable52(model string) bool {
+	return normalizeEffortModelID(model) == "claude-fable-5-2"
+}
+
+// IsMythos52 identifies the restricted-access Mythos 5.2 model.
+func IsMythos52(model string) bool {
+	return normalizeEffortModelID(model) == "claude-mythos-5-2"
+}
+
+// IsAdaptiveThinkingModel reports whether model only accepts adaptive thinking
+// and binds thinking blocks to signed history: the 5.5 models and Fable/Mythos 5.2.
+func IsAdaptiveThinkingModel(model string) bool {
+	return IsClaude55(model) || IsFable52(model) || IsMythos52(model)
+}
+
 func normalizeEffortModelID(model string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	id = strings.TrimPrefix(id, "models/")

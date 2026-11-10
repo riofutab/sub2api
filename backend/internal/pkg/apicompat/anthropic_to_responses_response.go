@@ -22,7 +22,7 @@ const anthropicThinkingEnvelopePrefix = "anthropic-thinking-v1:"
 // signatures must be preserved across protocol conversions (Claude 5.5, Gemini 3+, etc.).
 func IsSignedThinkingModel(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
-	return claude.IsClaude55(m) ||
+	return claude.IsAdaptiveThinkingModel(m) ||
 		strings.HasPrefix(m, "gemini-") || strings.HasPrefix(m, "claude-")
 }
 
@@ -80,7 +80,7 @@ func AnthropicToResponsesResponse(resp *AnthropicResponse) *ResponsesResponse {
 				})
 			}
 		case "text":
-			if claude.IsClaude55(resp.Model) && block.Text != "" {
+			if claude.IsAdaptiveThinkingModel(resp.Model) && block.Text != "" {
 				outputs = append(outputs, ResponsesOutput{Type: "message", ID: generateItemID(), Role: "assistant", Status: "completed", Content: []ResponsesContentPart{{Type: "output_text", Text: block.Text}}})
 				continue
 			}
