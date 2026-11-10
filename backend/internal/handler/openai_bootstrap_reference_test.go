@@ -3,14 +3,13 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"strings"
 )
 
 // Frozen implementation from upstream 5fc0e486c, kept only as a differential
 // oracle and allocation benchmark baseline.
 func referenceCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]any) bool, allowHistoricalContext bool) ([]byte, bool) {
-	if !referenceHasUniqueJSONMembers(body) {
+	if !hasUniqueJSONMembers(body) {
 		return body, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -90,60 +89,6 @@ func referenceCodexCallOutputBootstrap(body []byte, isCandidate func(map[string]
 		return body, false
 	}
 	return normalized, true
-}
-
-func referenceHasUniqueJSONMembers(body []byte) bool {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if !referenceConsumeUniqueJSONValue(decoder) {
-		return false
-	}
-	_, err := decoder.Token()
-	return err == io.EOF
-}
-
-func referenceConsumeUniqueJSONValue(decoder *json.Decoder) bool {
-	token, err := decoder.Token()
-	if err != nil {
-		return false
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return true
-	}
-
-	switch delim {
-	case '{':
-		members := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return false
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return false
-			}
-			if _, duplicate := members[key]; duplicate {
-				return false
-			}
-			members[key] = struct{}{}
-			if !referenceConsumeUniqueJSONValue(decoder) {
-				return false
-			}
-		}
-		end, err := decoder.Token()
-		return err == nil && end == json.Delim('}')
-	case '[':
-		for decoder.More() {
-			if !referenceConsumeUniqueJSONValue(decoder) {
-				return false
-			}
-		}
-		end, err := decoder.Token()
-		return err == nil && end == json.Delim(']')
-	default:
-		return false
-	}
 }
 
 func isCodexDelegationCandidate(item map[string]any) bool {
