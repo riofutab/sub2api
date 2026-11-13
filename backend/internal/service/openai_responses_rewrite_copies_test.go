@@ -251,7 +251,7 @@ func TestApplyCodexAccountIdentityClientMetadataRawMatchesSJSON(t *testing.T) {
 			original := bytes.Clone(body)
 			want, wantChanged, wantErr := applyCodexAccountIdentityClientMetadataRawWithSJSON(body, account, 77)
 			require.NoError(t, wantErr)
-			got, gotChanged, err := applyCodexAccountIdentityClientMetadataRaw(body, account, 77)
+			got, gotChanged, err := applyCodexAccountIdentityClientMetadataRaw(body, account, 77, "")
 			require.NoError(t, err)
 			require.Equal(t, wantChanged, gotChanged)
 			require.Equal(t, string(want), string(got))
@@ -267,7 +267,7 @@ func TestApplyCodexAccountIdentityClientMetadataRawCopiesBodyOnce(t *testing.T) 
 	allocated := minAllocatedBytes(func() {
 		var changed bool
 		var err error
-		out, changed, err = applyCodexAccountIdentityClientMetadataRaw(body, account, 77)
+		out, changed, err = applyCodexAccountIdentityClientMetadataRaw(body, account, 77, "")
 		require.NoError(t, err)
 		require.True(t, changed)
 	})
