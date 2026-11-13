@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -121,6 +122,15 @@ func (r *openAI401ConcurrentRepo) UpdateCredentials(_ context.Context, _ int64, 
 	r.account.Credentials = shallowCopyMap(credentials)
 	return nil
 }
+func (r *openAI401ConcurrentRepo) UpdateOpenAIOAuthCredentialsIfUnchanged(_ context.Context, _ int64, expected map[string]any, expectedProxyID *int64, credentials map[string]any) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !reflect.DeepEqual(r.account.Credentials, expected) || !reflect.DeepEqual(r.account.ProxyID, expectedProxyID) {
+		return false, nil
+	}
+	r.account.Credentials = shallowCopyMap(credentials)
+	return true, nil
+}
 func TestOpenAIOAuth401ConcurrentRefreshReusesWinner(t *testing.T) {
 	original := newOpenAIOAuthRecoveryAccount()
 	repo := &openAI401ConcurrentRepo{account: snapshotOAuthRefreshAccount(original)}
@@ -193,9 +203,9 @@ func TestOpenAIOAuth401DistributedLockWinner(t *testing.T) {
 }
 
 func TestOpenAIOAuth401RecoveryCancellationAndAccountChanges(t *testing.T) {
-	t.Run("cancelled_refresh_does_not_persist", func(t *testing.T) {
+	t.Run("cancelled_after_rotation_persists_rotated_credentials", func(t *testing.T) {
 		account := newOpenAIOAuthRecoveryAccount()
-		repo := &refreshAPIAccountRepo{account: account}
+		repo := &refreshAPIAccountRepo{account: snapshotOAuthRefreshAccount(account)}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		executor := &refreshAPIExecutorStub{credentials: map[string]any{"access_token": "late-at", "refresh_token": "late-rt"}, onRefresh: cancel}
@@ -203,8 +213,10 @@ func TestOpenAIOAuth401RecoveryCancellationAndAccountChanges(t *testing.T) {
 		provider.SetRefreshAPI(NewOAuthRefreshAPI(repo, nil), executor)
 		_, err := provider.refreshRejectedAccessToken(ctx, account, "rejected-at")
 		require.ErrorIs(t, err, context.Canceled)
-		require.Zero(t, repo.updateCredentialsCalls)
-		require.Equal(t, "old-rt", account.GetOpenAIRefreshToken())
+		// The provider already consumed old-rt; dropping late-rt would strand the account.
+		require.Equal(t, 1, repo.updateCredentialsCalls)
+		require.Equal(t, "late-rt", repo.account.GetOpenAIRefreshToken())
+		require.Equal(t, "old-rt", account.GetOpenAIRefreshToken(), "request snapshots must remain untouched")
 	})
 	t.Run("changed_proxy", func(t *testing.T) {
 		old := newOpenAIOAuthRecoveryAccount()

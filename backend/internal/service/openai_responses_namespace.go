@@ -228,6 +228,12 @@ func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item
 		if !item.IsObject() || !item.Get("namespace").Exists() || !shouldStrip(item) {
 			return true
 		}
+		// Named standalone outputs identify their source by name + namespace,
+		// rather than by a model-issued call ID. Preserve that identity.
+		if item.Get("type").String() == "function_call_output" && !item.Get("call_id").Exists() &&
+			item.Get("name").Type == gjson.String && strings.TrimSpace(item.Get("name").String()) != "" {
+			return true
+		}
 		itemBody, err := sjson.DeleteBytes([]byte(item.Raw), "namespace")
 		if err != nil {
 			stripErr = err

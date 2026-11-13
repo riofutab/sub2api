@@ -56,7 +56,7 @@ func BenchmarkApplyCodexAccountIdentityClientMetadataRaw(b *testing.B) {
 	b.SetBytes(int64(len(body)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		out, changed, err := applyCodexAccountIdentityClientMetadataRaw(body, account, 77)
+		out, changed, err := applyCodexAccountIdentityClientMetadataRaw(body, account, 77, "")
 		if err != nil || !changed || bytes.Equal(out, body) {
 			b.Fatalf("identity was not scoped: changed=%v err=%v", changed, err)
 		}

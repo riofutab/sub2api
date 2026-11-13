@@ -76,6 +76,26 @@ func (r *tokenRefreshCandidateRepo) UpdateCredentials(_ context.Context, id int6
 	return nil
 }
 
+// OpenAI rotations persist through the conditional write and then reread the row.
+func (r *tokenRefreshCandidateRepo) UpdateOpenAIOAuthCredentialsIfUnchanged(_ context.Context, id int64, _ map[string]any, _ *int64, _ map[string]any) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.updatedCredentialIDs = append(r.updatedCredentialIDs, id)
+	return true, nil
+}
+
+func (r *tokenRefreshCandidateRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.accounts {
+		if r.accounts[i].ID == id {
+			account := r.accounts[i]
+			return &account, nil
+		}
+	}
+	return nil, ErrAccountNotFound
+}
+
 func (r *tokenRefreshCandidateRepo) SetError(context.Context, int64, string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

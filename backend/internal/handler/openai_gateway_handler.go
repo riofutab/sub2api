@@ -494,19 +494,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	if normalizedBody, changed := normalizeCodexPageContext(body); changed {
-		body = normalizedBody
-		reqLog.Info("openai.codex_page_context_normalized",
-			zap.String("normalization", "call_output_to_user_message"),
-		)
-	}
-	body, automationChanged, delegationChanged := normalizeCodexBootstrapKinds(body, true, true)
-	if automationChanged {
-		reqLog.Info("openai.codex_automation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
-	}
-	if delegationChanged {
-		reqLog.Info("openai.codex_delegation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
-	}
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
 	if !ok {
@@ -1687,7 +1674,7 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 		return true
 	}
 
-	validation := service.ValidateFunctionCallOutputContextBytes(body)
+	validation := service.ValidateFunctionCallOutputContextBytes(codexStandaloneContextValidationBody(body))
 	if !validation.HasFunctionCallOutput {
 		return true
 	}
@@ -1715,35 +1702,28 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 	return false
 }
 
-func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
-	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
-	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
-	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
-	out, _, changed := normalizeCodexBootstrapKinds(body, false, true)
-	return out, changed
+func isCodexDelegationCandidate(item map[string]any) bool {
+	if stringField(item, "type") != "function_call_output" ||
+		!isCodexDelegationTool(stringField(item, "namespace"), stringField(item, "name")) {
+		return false
+	}
+	output, ok := item["output"].(string)
+	return ok && validCodexDelegationEnvelope(output)
 }
 
-func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
-	out, changed, _ := normalizeCodexBootstrapKinds(body, true, false)
-	return out, changed
+func isCodexAutomationCandidate(item map[string]any) bool {
+	if stringField(item, "type") != "function_call_output" ||
+		stringField(item, "namespace") != "codex_app" ||
+		stringField(item, "name") != "automation_update" {
+		return false
+	}
+	output, ok := item["output"].(string)
+	return ok && (validCodexAutomationBootstrap(output) || validCodexAutomationHeartbeat(output))
 }
 
-var (
-	codexAppNamespaceMarker = []byte("codex_app")
-	codexTUINamespaceMarker = []byte("codex_tui")
-)
-
-// mayContainCodexBootstrapCandidate 是 bootstrap 归一化的字节预检：候选项的 namespace 必须是
-// codex_app 或 codex_tui。原始字节里既没有这两个标记、也没有被转义的 ASCII 字母时，
-// 解码后不可能出现候选项，可以跳过结构扫描。
-func mayContainCodexBootstrapCandidate(body []byte) bool {
-	return bytes.Contains(body, codexAppNamespaceMarker) ||
-		bytes.Contains(body, codexTUINamespaceMarker) ||
-		service.JSONMayContainEscapedLetter(body)
-}
-
-func isResponsesCallOutputType(typ string) bool {
-	return strings.HasSuffix(typ, "_call_output") || typ == "tool_search_output"
+func stringField(item map[string]any, key string) string {
+	value, _ := item[key].(string)
+	return value
 }
 
 func isCodexDelegationTool(namespace, name string) bool {
