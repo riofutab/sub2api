@@ -55,14 +55,9 @@ func buildCodexResponsesBody(tb testing.TB, targetSize int) []byte {
 }
 
 // runOpenAIResponsesBodyPrep 复现 /v1/responses 热路径上与 body 大小相关的两段预处理：
-// handler 的两次 Codex bootstrap 归一化 + compaction 检测，以及 Forward 里的 compaction 顺序归一化。
+// handler 的 Codex 独立上下文校验副本 + compaction 检测，以及 Forward 里的 compaction 顺序归一化。
 func runOpenAIResponsesBodyPrep(tb testing.TB, body []byte) []byte {
-	if normalized, changed := normalizeCodexAutomationBootstrap(body); changed {
-		body = normalized
-	}
-	if normalized, changed := normalizeCodexDelegationBootstrap(body); changed {
-		body = normalized
-	}
+	_ = codexStandaloneContextValidationBody(body)
 	_ = isOpenAIRemoteCompactionV2Request(body)
 	normalized, changed, err := service.NormalizeCompactionTriggerInputOrder(body)
 	if err != nil {
