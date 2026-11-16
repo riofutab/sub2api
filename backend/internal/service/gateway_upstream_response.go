@@ -1276,6 +1276,7 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	advisor                  *AdvisorUsage
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1350,10 +1351,25 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		patch.advisor = advisorUsageFromSSEUsageObject(usageObj)
 		return patch
 	}
 
 	return nil
+}
+
+// advisorUsageFromSSEUsageObject 解析 message_delta usage 里的 iterations；没有该字段时返回 nil。
+func advisorUsageFromSSEUsageObject(usageObj map[string]any) *AdvisorUsage {
+	if _, ok := usageObj["iterations"].([]any); !ok {
+		return nil
+	}
+	raw, err := json.Marshal(usageObj)
+	if err != nil {
+		return nil
+	}
+	var parsed ClaudeUsage
+	applyAdvisorUsageFromJSON(&parsed, gjson.ParseBytes(raw))
+	return &parsed.Advisor
 }
 
 func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
@@ -1378,6 +1394,9 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+	}
+	if patch.advisor != nil {
+		usage.Advisor = *patch.advisor
 	}
 }
 
@@ -1512,6 +1531,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		response.Usage.CacheCreation5mTokens = int(cc5m.Int())
 		response.Usage.CacheCreation1hTokens = int(cc1h.Int())
 	}
+	applyAdvisorUsageFromJSON(&response.Usage, gjson.GetBytes(body, "usage"))
 
 	// 兼容 Kimi cached_tokens → cache_read_input_tokens
 	if response.Usage.CacheReadInputTokens == 0 {

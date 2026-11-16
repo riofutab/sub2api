@@ -170,6 +170,41 @@ func CacheCreation12hTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation12hTokens, v))
 }
 
+// AdvisorModel applies equality check predicate on the "advisor_model" field. It's identical to AdvisorModelEQ.
+func AdvisorModel(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorModel, v))
+}
+
+// AdvisorCalls applies equality check predicate on the "advisor_calls" field. It's identical to AdvisorCallsEQ.
+func AdvisorCalls(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCalls, v))
+}
+
+// AdvisorInputTokens applies equality check predicate on the "advisor_input_tokens" field. It's identical to AdvisorInputTokensEQ.
+func AdvisorInputTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorOutputTokens applies equality check predicate on the "advisor_output_tokens" field. It's identical to AdvisorOutputTokensEQ.
+func AdvisorOutputTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorCacheCreationTokens applies equality check predicate on the "advisor_cache_creation_tokens" field. It's identical to AdvisorCacheCreationTokensEQ.
+func AdvisorCacheCreationTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheReadTokens applies equality check predicate on the "advisor_cache_read_tokens" field. It's identical to AdvisorCacheReadTokensEQ.
+func AdvisorCacheReadTokens(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCost applies equality check predicate on the "advisor_cost" field. It's identical to AdvisorCostEQ.
+func AdvisorCost(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCost, v))
+}
+
 // InputCost applies equality check predicate on the "input_cost" field. It's identical to InputCostEQ.
 func InputCost(v float64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldInputCost, v))
@@ -1383,6 +1418,321 @@ func CacheCreation12hTokensLT(v int) predicate.UsageLog {
 // CacheCreation12hTokensLTE applies the LTE predicate on the "cache_creation_12h_tokens" field.
 func CacheCreation12hTokensLTE(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation12hTokens, v))
+}
+
+// AdvisorModelEQ applies the EQ predicate on the "advisor_model" field.
+func AdvisorModelEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorModel, v))
+}
+
+// AdvisorModelNEQ applies the NEQ predicate on the "advisor_model" field.
+func AdvisorModelNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorModel, v))
+}
+
+// AdvisorModelIn applies the In predicate on the "advisor_model" field.
+func AdvisorModelIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorModel, vs...))
+}
+
+// AdvisorModelNotIn applies the NotIn predicate on the "advisor_model" field.
+func AdvisorModelNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorModel, vs...))
+}
+
+// AdvisorModelGT applies the GT predicate on the "advisor_model" field.
+func AdvisorModelGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorModel, v))
+}
+
+// AdvisorModelGTE applies the GTE predicate on the "advisor_model" field.
+func AdvisorModelGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorModel, v))
+}
+
+// AdvisorModelLT applies the LT predicate on the "advisor_model" field.
+func AdvisorModelLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorModel, v))
+}
+
+// AdvisorModelLTE applies the LTE predicate on the "advisor_model" field.
+func AdvisorModelLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorModel, v))
+}
+
+// AdvisorModelContains applies the Contains predicate on the "advisor_model" field.
+func AdvisorModelContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldAdvisorModel, v))
+}
+
+// AdvisorModelHasPrefix applies the HasPrefix predicate on the "advisor_model" field.
+func AdvisorModelHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldAdvisorModel, v))
+}
+
+// AdvisorModelHasSuffix applies the HasSuffix predicate on the "advisor_model" field.
+func AdvisorModelHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldAdvisorModel, v))
+}
+
+// AdvisorModelIsNil applies the IsNil predicate on the "advisor_model" field.
+func AdvisorModelIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldAdvisorModel))
+}
+
+// AdvisorModelNotNil applies the NotNil predicate on the "advisor_model" field.
+func AdvisorModelNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldAdvisorModel))
+}
+
+// AdvisorModelEqualFold applies the EqualFold predicate on the "advisor_model" field.
+func AdvisorModelEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldAdvisorModel, v))
+}
+
+// AdvisorModelContainsFold applies the ContainsFold predicate on the "advisor_model" field.
+func AdvisorModelContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldAdvisorModel, v))
+}
+
+// AdvisorCallsEQ applies the EQ predicate on the "advisor_calls" field.
+func AdvisorCallsEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCalls, v))
+}
+
+// AdvisorCallsNEQ applies the NEQ predicate on the "advisor_calls" field.
+func AdvisorCallsNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorCalls, v))
+}
+
+// AdvisorCallsIn applies the In predicate on the "advisor_calls" field.
+func AdvisorCallsIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorCalls, vs...))
+}
+
+// AdvisorCallsNotIn applies the NotIn predicate on the "advisor_calls" field.
+func AdvisorCallsNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorCalls, vs...))
+}
+
+// AdvisorCallsGT applies the GT predicate on the "advisor_calls" field.
+func AdvisorCallsGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorCalls, v))
+}
+
+// AdvisorCallsGTE applies the GTE predicate on the "advisor_calls" field.
+func AdvisorCallsGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorCalls, v))
+}
+
+// AdvisorCallsLT applies the LT predicate on the "advisor_calls" field.
+func AdvisorCallsLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorCalls, v))
+}
+
+// AdvisorCallsLTE applies the LTE predicate on the "advisor_calls" field.
+func AdvisorCallsLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorCalls, v))
+}
+
+// AdvisorInputTokensEQ applies the EQ predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorInputTokensNEQ applies the NEQ predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorInputTokensIn applies the In predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorInputTokens, vs...))
+}
+
+// AdvisorInputTokensNotIn applies the NotIn predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorInputTokens, vs...))
+}
+
+// AdvisorInputTokensGT applies the GT predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorInputTokensGTE applies the GTE predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorInputTokensLT applies the LT predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorInputTokensLTE applies the LTE predicate on the "advisor_input_tokens" field.
+func AdvisorInputTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorInputTokens, v))
+}
+
+// AdvisorOutputTokensEQ applies the EQ predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorOutputTokensNEQ applies the NEQ predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorOutputTokensIn applies the In predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorOutputTokens, vs...))
+}
+
+// AdvisorOutputTokensNotIn applies the NotIn predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorOutputTokens, vs...))
+}
+
+// AdvisorOutputTokensGT applies the GT predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorOutputTokensGTE applies the GTE predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorOutputTokensLT applies the LT predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorOutputTokensLTE applies the LTE predicate on the "advisor_output_tokens" field.
+func AdvisorOutputTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorOutputTokens, v))
+}
+
+// AdvisorCacheCreationTokensEQ applies the EQ predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheCreationTokensNEQ applies the NEQ predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheCreationTokensIn applies the In predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorCacheCreationTokens, vs...))
+}
+
+// AdvisorCacheCreationTokensNotIn applies the NotIn predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorCacheCreationTokens, vs...))
+}
+
+// AdvisorCacheCreationTokensGT applies the GT predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheCreationTokensGTE applies the GTE predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheCreationTokensLT applies the LT predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheCreationTokensLTE applies the LTE predicate on the "advisor_cache_creation_tokens" field.
+func AdvisorCacheCreationTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorCacheCreationTokens, v))
+}
+
+// AdvisorCacheReadTokensEQ applies the EQ predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCacheReadTokensNEQ applies the NEQ predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCacheReadTokensIn applies the In predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorCacheReadTokens, vs...))
+}
+
+// AdvisorCacheReadTokensNotIn applies the NotIn predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorCacheReadTokens, vs...))
+}
+
+// AdvisorCacheReadTokensGT applies the GT predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCacheReadTokensGTE applies the GTE predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCacheReadTokensLT applies the LT predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCacheReadTokensLTE applies the LTE predicate on the "advisor_cache_read_tokens" field.
+func AdvisorCacheReadTokensLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorCacheReadTokens, v))
+}
+
+// AdvisorCostEQ applies the EQ predicate on the "advisor_cost" field.
+func AdvisorCostEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAdvisorCost, v))
+}
+
+// AdvisorCostNEQ applies the NEQ predicate on the "advisor_cost" field.
+func AdvisorCostNEQ(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAdvisorCost, v))
+}
+
+// AdvisorCostIn applies the In predicate on the "advisor_cost" field.
+func AdvisorCostIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAdvisorCost, vs...))
+}
+
+// AdvisorCostNotIn applies the NotIn predicate on the "advisor_cost" field.
+func AdvisorCostNotIn(vs ...float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAdvisorCost, vs...))
+}
+
+// AdvisorCostGT applies the GT predicate on the "advisor_cost" field.
+func AdvisorCostGT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAdvisorCost, v))
+}
+
+// AdvisorCostGTE applies the GTE predicate on the "advisor_cost" field.
+func AdvisorCostGTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAdvisorCost, v))
+}
+
+// AdvisorCostLT applies the LT predicate on the "advisor_cost" field.
+func AdvisorCostLT(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAdvisorCost, v))
+}
+
+// AdvisorCostLTE applies the LTE predicate on the "advisor_cost" field.
+func AdvisorCostLTE(v float64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAdvisorCost, v))
 }
 
 // InputCostEQ applies the EQ predicate on the "input_cost" field.

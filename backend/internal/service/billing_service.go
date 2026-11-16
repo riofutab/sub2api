@@ -212,6 +212,7 @@ type CostBreakdown struct {
 	ActualCost                float64 // 应用倍率后的实际费用
 	BillingMode               string  // 计费模式（"token"/"per_request"/"image"），由 CalculateCostUnified 填充
 	LongContextBillingApplied bool
+	AdvisorCost               float64 // 已计入 TotalCost 的 advisor 子推理费用（倍率前）
 }
 
 func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
@@ -224,6 +225,7 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.ImageOutputCost *= multiplier
 	cost.CacheCreationCost *= multiplier
 	cost.CacheReadCost *= multiplier
+	cost.AdvisorCost *= multiplier
 	cost.TotalCost *= multiplier
 	cost.ActualCost *= multiplier
 }

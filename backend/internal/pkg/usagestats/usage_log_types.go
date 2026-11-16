@@ -308,6 +308,22 @@ type UsageStats struct {
 	Endpoints                []EndpointStat `json:"endpoints,omitempty"`
 	UpstreamEndpoints        []EndpointStat `json:"upstream_endpoints,omitempty"`
 	EndpointPaths            []EndpointStat `json:"endpoint_paths,omitempty"`
+	// Advisors 按 advisor 模型汇总的子推理用量；其 token 不含在上面的 Total*Tokens 里，费用已含在 TotalCost 里。
+	Advisors []AdvisorStat `json:"advisors,omitempty"`
+}
+
+// AdvisorStat 是单个 advisor 模型在筛选范围内的子推理用量汇总。
+// Cost 为倍率前费用，ActualCost 按所在请求的 rate_multiplier 折算。
+type AdvisorStat struct {
+	Model               string  `json:"model"`
+	Requests            int64   `json:"requests"`
+	Calls               int64   `json:"calls"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	Cost                float64 `json:"cost"`
+	ActualCost          float64 `json:"actual_cost"`
 }
 
 // PlatformUsage 表示某用户/某 API key 在单个"有效平台"维度的用量明细。

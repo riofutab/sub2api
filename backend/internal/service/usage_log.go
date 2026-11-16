@@ -175,6 +175,16 @@ type UsageLog struct {
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64
 
+	// Advisor 子推理用量（Anthropic usage.iterations[] 的 advisor_message），不含在上面的 token 计数里；
+	// AdvisorCost 已计入 TotalCost（倍率前）。AdvisorModel 为 nil 表示本次请求没有调用 advisor。
+	AdvisorModel               *string
+	AdvisorCalls               int
+	AdvisorInputTokens         int
+	AdvisorOutputTokens        int
+	AdvisorCacheCreationTokens int
+	AdvisorCacheReadTokens     int
+	AdvisorCost                float64
+
 	BillingType        int8
 	RequestType        RequestType
 	Stream             bool

@@ -710,6 +710,7 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			if cc1h.Exists() {
 				usage.CacheCreation1hTokens = int(cc1h.Int())
 			}
+			applyAdvisorUsageFromJSON(usage, deltaUsage)
 		}
 	}
 
@@ -817,6 +818,7 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	usage.OutputTokens = int(usageNode.Get("output_tokens").Int())
 	usage.CacheCreationInputTokens = int(usageNode.Get("cache_creation_input_tokens").Int())
 	usage.CacheReadInputTokens = int(usageNode.Get("cache_read_input_tokens").Int())
+	applyAdvisorUsageFromJSON(usage, usageNode)
 
 	cc5m := usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Int()
 	cc1h := usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Int()

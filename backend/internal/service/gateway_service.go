@@ -637,6 +637,8 @@ type ClaudeUsage struct {
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// Advisor 来自 usage.iterations[]，不在顶层计数里，由各解析路径显式填充。
+	Advisor AdvisorUsage `json:"-"`
 }
 
 // ForwardResult 转发结果

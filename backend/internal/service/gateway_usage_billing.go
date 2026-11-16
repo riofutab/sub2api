@@ -856,10 +856,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				CacheReadTokens:     result.Usage.CacheReadInputTokens,
 				ImageOutputTokens:   result.Usage.ImageOutputTokens,
 			},
-			cost.TotalCost-cacheStorageCost, pricingAt,
+			cost.TotalCost-cacheStorageCost-cost.AdvisorCost, pricingAt,
 			accountStatsLongContextPricingEnabled(nil),
 		)
-		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
+		addSurchargeToAccountStatsCost(usageLog, cacheStorageCost+cost.AdvisorCost)
 	}
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
@@ -1004,13 +1004,13 @@ func (s *GatewayService) QuoteUsageCost(ctx context.Context, input *RecordUsageI
 	return cost.ActualCost
 }
 
-// addCacheStorageToAccountStatsCost 把显式缓存存储费按官方价叠加到账号统计成本。
-// 账号统计定价只覆盖 token 部分；统计成本为空时成本统计回落 total_cost，其中已含存储费。
-func addCacheStorageToAccountStatsCost(usageLog *UsageLog, storageCost float64) {
-	if usageLog == nil || usageLog.AccountStatsCost == nil || storageCost <= 0 {
+// addSurchargeToAccountStatsCost 把显式缓存存储费、advisor 子推理费按官方价叠加到账号统计成本。
+// 账号统计定价只覆盖执行模型的 token 部分；统计成本为空时成本统计回落 total_cost，其中已含这些费用。
+func addSurchargeToAccountStatsCost(usageLog *UsageLog, surcharge float64) {
+	if usageLog == nil || usageLog.AccountStatsCost == nil || surcharge <= 0 {
 		return
 	}
-	cost := *usageLog.AccountStatsCost + storageCost
+	cost := *usageLog.AccountStatsCost + surcharge
 	usageLog.AccountStatsCost = &cost
 }
 
@@ -1061,6 +1061,8 @@ func (s *GatewayService) calculateRecordUsageCost(
 	} else {
 		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 	}
+	// advisor 子推理不在顶层 usage 里，按 advisor 模型自身价格叠加。
+	tokenCost = addAdvisorCost(tokenCost, s.advisorCost(ctx, result, apiKey, multiplier, pricingAt))
 	if result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)
 		if price != nil && *price == 0 {
@@ -1385,6 +1387,15 @@ func (s *GatewayService) buildRecordUsageLog(
 		usageLog.TotalCost = cost.TotalCost
 		usageLog.ActualCost = cost.ActualCost
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
+		usageLog.AdvisorCost = cost.AdvisorCost
+	}
+	if advisor := result.Usage.Advisor; advisor.HasUsage() {
+		usageLog.AdvisorModel = optionalTrimmedStringPtr(advisor.Model)
+		usageLog.AdvisorCalls = advisor.Calls
+		usageLog.AdvisorInputTokens = advisor.InputTokens
+		usageLog.AdvisorOutputTokens = advisor.OutputTokens
+		usageLog.AdvisorCacheCreationTokens = advisor.CacheCreationInputTokens
+		usageLog.AdvisorCacheReadTokens = advisor.CacheReadInputTokens
 	}
 
 	return usageLog

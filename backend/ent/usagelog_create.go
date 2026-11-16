@@ -309,6 +309,104 @@ func (_c *UsageLogCreate) SetNillableCacheCreation12hTokens(v *int) *UsageLogCre
 	return _c
 }
 
+// SetAdvisorModel sets the "advisor_model" field.
+func (_c *UsageLogCreate) SetAdvisorModel(v string) *UsageLogCreate {
+	_c.mutation.SetAdvisorModel(v)
+	return _c
+}
+
+// SetNillableAdvisorModel sets the "advisor_model" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorModel(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorModel(*v)
+	}
+	return _c
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (_c *UsageLogCreate) SetAdvisorCalls(v int) *UsageLogCreate {
+	_c.mutation.SetAdvisorCalls(v)
+	return _c
+}
+
+// SetNillableAdvisorCalls sets the "advisor_calls" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorCalls(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorCalls(*v)
+	}
+	return _c
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (_c *UsageLogCreate) SetAdvisorInputTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAdvisorInputTokens(v)
+	return _c
+}
+
+// SetNillableAdvisorInputTokens sets the "advisor_input_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorInputTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorInputTokens(*v)
+	}
+	return _c
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (_c *UsageLogCreate) SetAdvisorOutputTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAdvisorOutputTokens(v)
+	return _c
+}
+
+// SetNillableAdvisorOutputTokens sets the "advisor_output_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorOutputTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorOutputTokens(*v)
+	}
+	return _c
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (_c *UsageLogCreate) SetAdvisorCacheCreationTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAdvisorCacheCreationTokens(v)
+	return _c
+}
+
+// SetNillableAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorCacheCreationTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorCacheCreationTokens(*v)
+	}
+	return _c
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (_c *UsageLogCreate) SetAdvisorCacheReadTokens(v int) *UsageLogCreate {
+	_c.mutation.SetAdvisorCacheReadTokens(v)
+	return _c
+}
+
+// SetNillableAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorCacheReadTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorCacheReadTokens(*v)
+	}
+	return _c
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (_c *UsageLogCreate) SetAdvisorCost(v float64) *UsageLogCreate {
+	_c.mutation.SetAdvisorCost(v)
+	return _c
+}
+
+// SetNillableAdvisorCost sets the "advisor_cost" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAdvisorCost(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetAdvisorCost(*v)
+	}
+	return _c
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_c *UsageLogCreate) SetInputCost(v float64) *UsageLogCreate {
 	_c.mutation.SetInputCost(v)
@@ -757,6 +855,30 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultCacheCreation12hTokens
 		_c.mutation.SetCacheCreation12hTokens(v)
 	}
+	if _, ok := _c.mutation.AdvisorCalls(); !ok {
+		v := usagelog.DefaultAdvisorCalls
+		_c.mutation.SetAdvisorCalls(v)
+	}
+	if _, ok := _c.mutation.AdvisorInputTokens(); !ok {
+		v := usagelog.DefaultAdvisorInputTokens
+		_c.mutation.SetAdvisorInputTokens(v)
+	}
+	if _, ok := _c.mutation.AdvisorOutputTokens(); !ok {
+		v := usagelog.DefaultAdvisorOutputTokens
+		_c.mutation.SetAdvisorOutputTokens(v)
+	}
+	if _, ok := _c.mutation.AdvisorCacheCreationTokens(); !ok {
+		v := usagelog.DefaultAdvisorCacheCreationTokens
+		_c.mutation.SetAdvisorCacheCreationTokens(v)
+	}
+	if _, ok := _c.mutation.AdvisorCacheReadTokens(); !ok {
+		v := usagelog.DefaultAdvisorCacheReadTokens
+		_c.mutation.SetAdvisorCacheReadTokens(v)
+	}
+	if _, ok := _c.mutation.AdvisorCost(); !ok {
+		v := usagelog.DefaultAdvisorCost
+		_c.mutation.SetAdvisorCost(v)
+	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		v := usagelog.DefaultInputCost
 		_c.mutation.SetInputCost(v)
@@ -895,6 +1017,29 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.CacheCreation12hTokens(); !ok {
 		return &ValidationError{Name: "cache_creation_12h_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_12h_tokens"`)}
+	}
+	if v, ok := _c.mutation.AdvisorModel(); ok {
+		if err := usagelog.AdvisorModelValidator(v); err != nil {
+			return &ValidationError{Name: "advisor_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.advisor_model": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.AdvisorCalls(); !ok {
+		return &ValidationError{Name: "advisor_calls", err: errors.New(`ent: missing required field "UsageLog.advisor_calls"`)}
+	}
+	if _, ok := _c.mutation.AdvisorInputTokens(); !ok {
+		return &ValidationError{Name: "advisor_input_tokens", err: errors.New(`ent: missing required field "UsageLog.advisor_input_tokens"`)}
+	}
+	if _, ok := _c.mutation.AdvisorOutputTokens(); !ok {
+		return &ValidationError{Name: "advisor_output_tokens", err: errors.New(`ent: missing required field "UsageLog.advisor_output_tokens"`)}
+	}
+	if _, ok := _c.mutation.AdvisorCacheCreationTokens(); !ok {
+		return &ValidationError{Name: "advisor_cache_creation_tokens", err: errors.New(`ent: missing required field "UsageLog.advisor_cache_creation_tokens"`)}
+	}
+	if _, ok := _c.mutation.AdvisorCacheReadTokens(); !ok {
+		return &ValidationError{Name: "advisor_cache_read_tokens", err: errors.New(`ent: missing required field "UsageLog.advisor_cache_read_tokens"`)}
+	}
+	if _, ok := _c.mutation.AdvisorCost(); !ok {
+		return &ValidationError{Name: "advisor_cost", err: errors.New(`ent: missing required field "UsageLog.advisor_cost"`)}
 	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		return &ValidationError{Name: "input_cost", err: errors.New(`ent: missing required field "UsageLog.input_cost"`)}
@@ -1080,6 +1225,34 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheCreation12hTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
 		_node.CacheCreation12hTokens = value
+	}
+	if value, ok := _c.mutation.AdvisorModel(); ok {
+		_spec.SetField(usagelog.FieldAdvisorModel, field.TypeString, value)
+		_node.AdvisorModel = &value
+	}
+	if value, ok := _c.mutation.AdvisorCalls(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCalls, field.TypeInt, value)
+		_node.AdvisorCalls = value
+	}
+	if value, ok := _c.mutation.AdvisorInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorInputTokens, field.TypeInt, value)
+		_node.AdvisorInputTokens = value
+	}
+	if value, ok := _c.mutation.AdvisorOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorOutputTokens, field.TypeInt, value)
+		_node.AdvisorOutputTokens = value
+	}
+	if value, ok := _c.mutation.AdvisorCacheCreationTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheCreationTokens, field.TypeInt, value)
+		_node.AdvisorCacheCreationTokens = value
+	}
+	if value, ok := _c.mutation.AdvisorCacheReadTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheReadTokens, field.TypeInt, value)
+		_node.AdvisorCacheReadTokens = value
+	}
+	if value, ok := _c.mutation.AdvisorCost(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCost, field.TypeFloat64, value)
+		_node.AdvisorCost = value
 	}
 	if value, ok := _c.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
@@ -1709,6 +1882,132 @@ func (u *UsageLogUpsert) UpdateCacheCreation12hTokens() *UsageLogUpsert {
 // AddCacheCreation12hTokens adds v to the "cache_creation_12h_tokens" field.
 func (u *UsageLogUpsert) AddCacheCreation12hTokens(v int) *UsageLogUpsert {
 	u.Add(usagelog.FieldCacheCreation12hTokens, v)
+	return u
+}
+
+// SetAdvisorModel sets the "advisor_model" field.
+func (u *UsageLogUpsert) SetAdvisorModel(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorModel, v)
+	return u
+}
+
+// UpdateAdvisorModel sets the "advisor_model" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorModel() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorModel)
+	return u
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (u *UsageLogUpsert) ClearAdvisorModel() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldAdvisorModel)
+	return u
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (u *UsageLogUpsert) SetAdvisorCalls(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorCalls, v)
+	return u
+}
+
+// UpdateAdvisorCalls sets the "advisor_calls" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorCalls() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorCalls)
+	return u
+}
+
+// AddAdvisorCalls adds v to the "advisor_calls" field.
+func (u *UsageLogUpsert) AddAdvisorCalls(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorCalls, v)
+	return u
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (u *UsageLogUpsert) SetAdvisorInputTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorInputTokens, v)
+	return u
+}
+
+// UpdateAdvisorInputTokens sets the "advisor_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorInputTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorInputTokens)
+	return u
+}
+
+// AddAdvisorInputTokens adds v to the "advisor_input_tokens" field.
+func (u *UsageLogUpsert) AddAdvisorInputTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorInputTokens, v)
+	return u
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (u *UsageLogUpsert) SetAdvisorOutputTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorOutputTokens, v)
+	return u
+}
+
+// UpdateAdvisorOutputTokens sets the "advisor_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorOutputTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorOutputTokens)
+	return u
+}
+
+// AddAdvisorOutputTokens adds v to the "advisor_output_tokens" field.
+func (u *UsageLogUpsert) AddAdvisorOutputTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorOutputTokens, v)
+	return u
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsert) SetAdvisorCacheCreationTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorCacheCreationTokens, v)
+	return u
+}
+
+// UpdateAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorCacheCreationTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorCacheCreationTokens)
+	return u
+}
+
+// AddAdvisorCacheCreationTokens adds v to the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsert) AddAdvisorCacheCreationTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorCacheCreationTokens, v)
+	return u
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsert) SetAdvisorCacheReadTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorCacheReadTokens, v)
+	return u
+}
+
+// UpdateAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorCacheReadTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorCacheReadTokens)
+	return u
+}
+
+// AddAdvisorCacheReadTokens adds v to the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsert) AddAdvisorCacheReadTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorCacheReadTokens, v)
+	return u
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (u *UsageLogUpsert) SetAdvisorCost(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldAdvisorCost, v)
+	return u
+}
+
+// UpdateAdvisorCost sets the "advisor_cost" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAdvisorCost() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAdvisorCost)
+	return u
+}
+
+// AddAdvisorCost adds v to the "advisor_cost" field.
+func (u *UsageLogUpsert) AddAdvisorCost(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldAdvisorCost, v)
 	return u
 }
 
@@ -2665,6 +2964,153 @@ func (u *UsageLogUpsertOne) AddCacheCreation12hTokens(v int) *UsageLogUpsertOne 
 func (u *UsageLogUpsertOne) UpdateCacheCreation12hTokens() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheCreation12hTokens()
+	})
+}
+
+// SetAdvisorModel sets the "advisor_model" field.
+func (u *UsageLogUpsertOne) SetAdvisorModel(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorModel(v)
+	})
+}
+
+// UpdateAdvisorModel sets the "advisor_model" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorModel() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorModel()
+	})
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (u *UsageLogUpsertOne) ClearAdvisorModel() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAdvisorModel()
+	})
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (u *UsageLogUpsertOne) SetAdvisorCalls(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCalls(v)
+	})
+}
+
+// AddAdvisorCalls adds v to the "advisor_calls" field.
+func (u *UsageLogUpsertOne) AddAdvisorCalls(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCalls(v)
+	})
+}
+
+// UpdateAdvisorCalls sets the "advisor_calls" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorCalls() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCalls()
+	})
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (u *UsageLogUpsertOne) SetAdvisorInputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorInputTokens(v)
+	})
+}
+
+// AddAdvisorInputTokens adds v to the "advisor_input_tokens" field.
+func (u *UsageLogUpsertOne) AddAdvisorInputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorInputTokens(v)
+	})
+}
+
+// UpdateAdvisorInputTokens sets the "advisor_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorInputTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorInputTokens()
+	})
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (u *UsageLogUpsertOne) SetAdvisorOutputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorOutputTokens(v)
+	})
+}
+
+// AddAdvisorOutputTokens adds v to the "advisor_output_tokens" field.
+func (u *UsageLogUpsertOne) AddAdvisorOutputTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorOutputTokens(v)
+	})
+}
+
+// UpdateAdvisorOutputTokens sets the "advisor_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorOutputTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorOutputTokens()
+	})
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsertOne) SetAdvisorCacheCreationTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCacheCreationTokens(v)
+	})
+}
+
+// AddAdvisorCacheCreationTokens adds v to the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsertOne) AddAdvisorCacheCreationTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCacheCreationTokens(v)
+	})
+}
+
+// UpdateAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorCacheCreationTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCacheCreationTokens()
+	})
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsertOne) SetAdvisorCacheReadTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCacheReadTokens(v)
+	})
+}
+
+// AddAdvisorCacheReadTokens adds v to the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsertOne) AddAdvisorCacheReadTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCacheReadTokens(v)
+	})
+}
+
+// UpdateAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorCacheReadTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCacheReadTokens()
+	})
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (u *UsageLogUpsertOne) SetAdvisorCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCost(v)
+	})
+}
+
+// AddAdvisorCost adds v to the "advisor_cost" field.
+func (u *UsageLogUpsertOne) AddAdvisorCost(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCost(v)
+	})
+}
+
+// UpdateAdvisorCost sets the "advisor_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAdvisorCost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCost()
 	})
 }
 
@@ -3863,6 +4309,153 @@ func (u *UsageLogUpsertBulk) AddCacheCreation12hTokens(v int) *UsageLogUpsertBul
 func (u *UsageLogUpsertBulk) UpdateCacheCreation12hTokens() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheCreation12hTokens()
+	})
+}
+
+// SetAdvisorModel sets the "advisor_model" field.
+func (u *UsageLogUpsertBulk) SetAdvisorModel(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorModel(v)
+	})
+}
+
+// UpdateAdvisorModel sets the "advisor_model" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorModel() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorModel()
+	})
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (u *UsageLogUpsertBulk) ClearAdvisorModel() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAdvisorModel()
+	})
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (u *UsageLogUpsertBulk) SetAdvisorCalls(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCalls(v)
+	})
+}
+
+// AddAdvisorCalls adds v to the "advisor_calls" field.
+func (u *UsageLogUpsertBulk) AddAdvisorCalls(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCalls(v)
+	})
+}
+
+// UpdateAdvisorCalls sets the "advisor_calls" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorCalls() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCalls()
+	})
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (u *UsageLogUpsertBulk) SetAdvisorInputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorInputTokens(v)
+	})
+}
+
+// AddAdvisorInputTokens adds v to the "advisor_input_tokens" field.
+func (u *UsageLogUpsertBulk) AddAdvisorInputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorInputTokens(v)
+	})
+}
+
+// UpdateAdvisorInputTokens sets the "advisor_input_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorInputTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorInputTokens()
+	})
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (u *UsageLogUpsertBulk) SetAdvisorOutputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorOutputTokens(v)
+	})
+}
+
+// AddAdvisorOutputTokens adds v to the "advisor_output_tokens" field.
+func (u *UsageLogUpsertBulk) AddAdvisorOutputTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorOutputTokens(v)
+	})
+}
+
+// UpdateAdvisorOutputTokens sets the "advisor_output_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorOutputTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorOutputTokens()
+	})
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsertBulk) SetAdvisorCacheCreationTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCacheCreationTokens(v)
+	})
+}
+
+// AddAdvisorCacheCreationTokens adds v to the "advisor_cache_creation_tokens" field.
+func (u *UsageLogUpsertBulk) AddAdvisorCacheCreationTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCacheCreationTokens(v)
+	})
+}
+
+// UpdateAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorCacheCreationTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCacheCreationTokens()
+	})
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsertBulk) SetAdvisorCacheReadTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCacheReadTokens(v)
+	})
+}
+
+// AddAdvisorCacheReadTokens adds v to the "advisor_cache_read_tokens" field.
+func (u *UsageLogUpsertBulk) AddAdvisorCacheReadTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCacheReadTokens(v)
+	})
+}
+
+// UpdateAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorCacheReadTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCacheReadTokens()
+	})
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (u *UsageLogUpsertBulk) SetAdvisorCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAdvisorCost(v)
+	})
+}
+
+// AddAdvisorCost adds v to the "advisor_cost" field.
+func (u *UsageLogUpsertBulk) AddAdvisorCost(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAdvisorCost(v)
+	})
+}
+
+// UpdateAdvisorCost sets the "advisor_cost" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAdvisorCost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAdvisorCost()
 	})
 }
 

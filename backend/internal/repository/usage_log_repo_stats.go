@@ -822,7 +822,62 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 	stats.TotalAccountCost = &totalAccountCost
 	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheTokens
 
+	advisors, err := r.getAdvisorStats(ctx, conditions, args)
+	if err != nil {
+		return nil, err
+	}
+	stats.Advisors = advisors
+
 	return stats, nil
+}
+
+// AdvisorStat represents advisor sub-inference usage grouped by advisor model.
+type AdvisorStat = usagestats.AdvisorStat
+
+// getAdvisorStats 在与主统计相同的筛选条件下按 advisor 模型汇总子推理用量。
+func (r *usageLogRepository) getAdvisorStats(ctx context.Context, conditions []string, args []any) (results []AdvisorStat, err error) {
+	scoped := append(append(make([]string, 0, len(conditions)+1), conditions...), "advisor_calls > 0")
+	query := fmt.Sprintf(`
+		SELECT
+			COALESCE(NULLIF(TRIM(advisor_model), ''), 'unknown') AS advisor_model,
+			COUNT(*) AS requests,
+			COALESCE(SUM(advisor_calls), 0) AS calls,
+			COALESCE(SUM(advisor_input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(advisor_output_tokens), 0) AS output_tokens,
+			COALESCE(SUM(advisor_cache_creation_tokens), 0) AS cache_creation_tokens,
+			COALESCE(SUM(advisor_cache_read_tokens), 0) AS cache_read_tokens,
+			COALESCE(SUM(advisor_cost), 0) AS cost,
+			COALESCE(SUM(advisor_cost * rate_multiplier), 0) AS actual_cost
+		FROM usage_logs
+		%s
+		GROUP BY 1
+		ORDER BY cost DESC, advisor_model
+	`, buildWhere(scoped))
+
+	rows, err := r.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var row AdvisorStat
+		if err := rows.Scan(
+			&row.Model,
+			&row.Requests,
+			&row.Calls,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.CacheCreationTokens,
+			&row.CacheReadTokens,
+			&row.Cost,
+			&row.ActualCost,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, row)
+	}
+	return results, rows.Err()
 }
 
 // AccountUsageHistory represents daily usage history for an account
