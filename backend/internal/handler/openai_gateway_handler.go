@@ -364,7 +364,7 @@ func NewOpenAIGatewayHandler(
 	opsService *service.OpsService,
 	cfg *config.Config,
 ) *OpenAIGatewayHandler {
-	pingInterval := time.Duration(0)
+	pingInterval := defaultPingInterval
 	maxAccountSwitches := 3
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
@@ -493,6 +493,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	} else if changed {
 		body = cappedBody
+	}
+	if normalizedBody, changed := normalizeCodexUntrustedContext(body); changed {
+		body = normalizedBody
+		reqLog.Info("openai.codex_untrusted_context_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
+	}
+	body, automationChanged, delegationChanged := normalizeCodexBootstrapKinds(body, true, true)
+	if automationChanged {
+		reqLog.Info("openai.codex_automation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
+	}
+	if delegationChanged {
+		reqLog.Info("openai.codex_delegation_bootstrap_normalized", zap.String("normalization", "call_output_to_user_message"))
 	}
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
@@ -1406,7 +1419,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
 		// 应用渠道模型映射到请求体
 		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
-		writerSizeBeforeForward := c.Writer.Size()
+		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -1494,10 +1507,15 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						)
 						return
 					}
-					if c.Writer.Size() != writerSizeBeforeForward {
+					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
+					}
+					// Only keepalive bytes were written, so failover may continue, but
+					// every later error must be written as an SSE event.
+					if c.Writer.Written() {
+						streamStarted = true
 					}
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
@@ -1656,16 +1674,24 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 		h.anthropicStreamingAwareError(c, status, "api_error", failoverErr.ClientMessage, streamStarted)
 		return
 	}
+	// A failed or error frame that triggered the failover no longer reaches the
+	// client in-band, so its error passthrough rule is applied here instead.
+	if status, errType, msg, ok := service.ApplyOpenAIStreamFailedFrameRule(c, failoverErr); ok {
+		h.anthropicStreamingAwareError(c, status, errType, msg, streamStarted)
+		return
+	}
 	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
 
 // ensureAnthropicErrorResponse writes a fallback Anthropic error if no response was written.
 func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponse(c *gin.Context, streamStarted bool) bool {
-	if c == nil || c.Writer == nil || c.Writer.Written() {
+	// Keepalive pings alone do not count as a written response, but they do
+	// commit the response as SSE, so the fallback must then be an SSE event.
+	if c == nil || c.Writer == nil || service.OpenAICompactKeepaliveAdjustedWrittenSize(c) >= 0 {
 		return false
 	}
-	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted || c.Writer.Written())
 	return true
 }
 
@@ -1674,7 +1700,7 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 		return true
 	}
 
-	validation := service.ValidateFunctionCallOutputContextBytes(codexStandaloneContextValidationBody(body))
+	validation := service.ValidateFunctionCallOutputContextBytes(body)
 	if !validation.HasFunctionCallOutput {
 		return true
 	}
@@ -1702,28 +1728,35 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 	return false
 }
 
-func isCodexDelegationCandidate(item map[string]any) bool {
-	if stringField(item, "type") != "function_call_output" ||
-		!isCodexDelegationTool(stringField(item, "namespace"), stringField(item, "name")) {
-		return false
-	}
-	output, ok := item["output"].(string)
-	return ok && validCodexDelegationEnvelope(output)
+func normalizeCodexDelegationBootstrap(body []byte) ([]byte, bool) {
+	// 已有任务通过 send_message_to_thread 唤醒时会携带 previous_response_id；
+	// 完整历史回放还会带有已配对的调用项。delegation 仍是客户端注入的用户输入，
+	// 不属于这些历史调用的结果，因此允许它与可明确配对的历史上下文共存。
+	out, _, changed := normalizeCodexBootstrapKinds(body, false, true)
+	return out, changed
 }
 
-func isCodexAutomationCandidate(item map[string]any) bool {
-	if stringField(item, "type") != "function_call_output" ||
-		stringField(item, "namespace") != "codex_app" ||
-		stringField(item, "name") != "automation_update" {
-		return false
-	}
-	output, ok := item["output"].(string)
-	return ok && (validCodexAutomationBootstrap(output) || validCodexAutomationHeartbeat(output))
+func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
+	out, changed, _ := normalizeCodexBootstrapKinds(body, true, false)
+	return out, changed
 }
 
-func stringField(item map[string]any, key string) string {
-	value, _ := item[key].(string)
-	return value
+var (
+	codexAppNamespaceMarker = []byte("codex_app")
+	codexTUINamespaceMarker = []byte("codex_tui")
+)
+
+// mayContainCodexBootstrapCandidate 是 bootstrap 归一化的字节预检：候选项的 namespace 必须是
+// codex_app 或 codex_tui。原始字节里既没有这两个标记、也没有被转义的 ASCII 字母时，
+// 解码后不可能出现候选项，可以跳过结构扫描。
+func mayContainCodexBootstrapCandidate(body []byte) bool {
+	return bytes.Contains(body, codexAppNamespaceMarker) ||
+		bytes.Contains(body, codexTUINamespaceMarker) ||
+		service.JSONMayEscapePlainASCII(body)
+}
+
+func isResponsesCallOutputType(typ string) bool {
+	return strings.HasSuffix(typ, "_call_output") || typ == "tool_search_output"
 }
 
 func isCodexDelegationTool(namespace, name string) bool {
@@ -3126,6 +3159,26 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
 					previousResponseID = ""
+					previousResponseCanMove = true
+					// Selection and first-turn billing for the new account must use
+					// the current turn, not the model from the connection's first frame.
+					if retryModel := strings.TrimSpace(gjson.GetBytes(retryPayload, "model").String()); retryModel != "" {
+						reqModel = retryModel
+					}
+					if apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+						wsRouteModel = reqModel
+					}
+					channelMappingWS, _ = h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, wsRouteModel)
+					wsForwardModel = openAIChannelForwardModel(channelMappingWS, wsRouteModel)
+					imageIntent = service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, retryPayload)
+					if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
+						closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
+						return
+					}
+					requiredCapability = service.OpenAIEndpointCapabilityChatCompletions
+					if imageIntent && requestPlatform == service.PlatformOpenAI {
+						requiredCapability = service.OpenAIEndpointCapabilityResponses
+					}
 					reqLog.Warn("openai.websocket_current_turn_failover_retry",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),

@@ -68,6 +68,8 @@ type apiKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
 }
 
+// CreateBestEffort returns nil when the row is stored, or when ctx expired while the writer is
+// still retrying the row; a dropped error means the writer gave the row up and already recorded the loss.
 type usageLogBestEffortWriter interface {
 	CreateBestEffort(ctx context.Context, log *UsageLog) error
 }
@@ -370,10 +372,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return true, nil
 	}
 
-	billingCtx, cancel := detachedBillingContext(ctx)
-	defer cancel()
-
-	result, err := repo.Apply(billingCtx, cmd)
+	applyCtx, cancelApply := detachedBillingContext(ctx)
+	result, err := repo.Apply(applyCtx, cmd)
+	cancelApply()
 	if err != nil {
 		return false, err
 	}
@@ -382,6 +383,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
+
+	// Apply 可能在按用户合并的结算通道中排队，结算后的缓存同步使用独立的超时。
+	billingCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
@@ -629,21 +634,11 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	defer cancel()
 
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
-		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
+		// Billing is already done and the log must land (issue #3656): the writer owns the row and
+		// retries transient errors with backoff, independent of the usageCtx deadline. A row it gives
+		// up on (dropped) was already counted and logged with its request_id.
+		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil && !IsUsageLogCreateDropped(err) {
 			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
-			// 计费已在此前完成，日志必须落库：dropped（批处理队列超时）同样走同步兜底，
-			// 否则会出现“已扣费但无 usage_log”的对账缺口（issue #3656）。
-			// 重复写入由 usage_logs 的 ON CONFLICT (request_id, api_key_id) DO NOTHING 防护。
-			fallbackCtx := usageCtx
-			if usageCtx.Err() != nil {
-				// usageCtx 已耗尽（best-effort 入队阻塞到期限）：换新的 detached 窗口，避免兜底必然失败。
-				var fallbackCancel context.CancelFunc
-				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
-				defer fallbackCancel()
-			}
-			if _, syncErr := repo.Create(fallbackCtx, usageLog); syncErr != nil {
-				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
-			}
 		}
 		return
 	}
@@ -857,7 +852,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				ImageOutputTokens:   result.Usage.ImageOutputTokens,
 			},
 			cost.TotalCost-cacheStorageCost-cost.AdvisorCost, pricingAt,
-			accountStatsLongContextPricingEnabled(nil),
+			accountStatsLongContextPricingEnabled(nil), result.upstreamPriceFactor(),
 		)
 		addSurchargeToAccountStatsCost(usageLog, cacheStorageCost+cost.AdvisorCost)
 	}
@@ -1014,6 +1009,23 @@ func addSurchargeToAccountStatsCost(usageLog *UsageLog, surcharge float64) {
 	usageLog.AccountStatsCost = &cost
 }
 
+// upstreamPriceFactorApplies 判断上游端点价格倍数是否作用于本次 token 费用：只作用于默认模型价（LiteLLM/fallback）。
+// 管理员配置的分组价、渠道价视为最终价，不再叠加倍数，与账号统计成本只在默认价档位加价的口径一致。
+func (s *GatewayService) upstreamPriceFactorApplies(ctx context.Context, result *ForwardResult, apiKey *APIKey, billingModel string) bool {
+	if result.upstreamPriceFactor() == 1 {
+		return false
+	}
+	return s.resolveChannelPricing(ctx, billingModel, apiKey) == nil
+}
+
+// applyUpstreamPriceFactor 把上游端点价格倍数作用于按 token 计费的费用，按次等其他计费模式不受影响。
+func applyUpstreamPriceFactor(cost *CostBreakdown, result *ForwardResult) {
+	if cost == nil || (cost.BillingMode != "" && cost.BillingMode != string(BillingModeToken)) {
+		return
+	}
+	applyCostBreakdownMultiplier(cost, result.upstreamPriceFactor())
+}
+
 // calculateRecordUsageCost 根据请求类型计算费用。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
@@ -1029,6 +1041,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 	if result.ImageCount > 0 {
 		if !imageCountBillingApplies(apiKey, result.ImageEndpoint) {
 			if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
+				// resolved 来自分组价或渠道价，是管理员配置的最终价，不叠加上游端点价格倍数。
 				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 			}
 		}
@@ -1060,6 +1073,9 @@ func (s *GatewayService) calculateRecordUsageCost(
 		tokenCost = &CostBreakdown{}
 	} else {
 		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		if s.upstreamPriceFactorApplies(ctx, result, apiKey, billingModel) {
+			applyUpstreamPriceFactor(tokenCost, result)
+		}
 	}
 	// advisor 子推理不在顶层 usage 里，按 advisor 模型自身价格叠加。
 	tokenCost = addAdvisorCost(tokenCost, s.advisorCost(ctx, result, apiKey, multiplier, pricingAt))

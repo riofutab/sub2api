@@ -120,7 +120,8 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 		return found
 	}
 
-	if hasNamespaceTool(gjson.GetBytes(body, "tools")) {
+	root := parseRawJSONView(body)
+	if hasNamespaceTool(root.Get("tools")) {
 		return true
 	}
 
@@ -128,7 +129,7 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 	// tools and into an input.additional_tools carrier. API-key requests are
 	// intentionally not rewritten by normalizeOpenAIResponsesLiteTools, so the
 	// declaration can arrive here only in this form.
-	input := gjson.GetBytes(body, "input")
+	input := root.Get("input")
 	if !input.IsArray() {
 		return false
 	}
@@ -212,7 +213,9 @@ func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item
 	if !bytes.Contains(body, []byte(`"namespace"`)) {
 		return body, nil
 	}
-	input := gjson.GetBytes(body, "input")
+	// Zero-copy view: input.Raw aliases body and is only read below; the
+	// rebuilt array is written into a fresh buffer.
+	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return body, nil
 	}
@@ -226,12 +229,6 @@ func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item
 		// 先判存在再判类型：长历史里绝大多数是 message/reasoning 等不带 namespace
 		// 的项，这样它们无需再扫一次 type。
 		if !item.IsObject() || !item.Get("namespace").Exists() || !shouldStrip(item) {
-			return true
-		}
-		// Named standalone outputs identify their source by name + namespace,
-		// rather than by a model-issued call ID. Preserve that identity.
-		if item.Get("type").String() == "function_call_output" && !item.Get("call_id").Exists() &&
-			item.Get("name").Type == gjson.String && strings.TrimSpace(item.Get("name").String()) != "" {
 			return true
 		}
 		itemBody, err := sjson.DeleteBytes([]byte(item.Raw), "namespace")

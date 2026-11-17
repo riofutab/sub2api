@@ -383,14 +383,12 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 	// Print a compact upstream request fingerprint when we hit the Claude Code OAuth
 	// credential scope error. This avoids requiring env-var tweaks in a fixed deploy.
 	if isClaudeCodeCredentialScopeError(upstreamMsg) && c != nil {
-		if v, ok := c.Get(claudeMimicDebugInfoKey); ok {
-			if line, ok := v.(string); ok && strings.TrimSpace(line) != "" {
-				logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
-					resp.StatusCode,
-					resp.Header.Get("x-request-id"),
-					line,
-				)
-			}
+		if line := claudeMimicDebugLineFromContext(c); strings.TrimSpace(line) != "" {
+			logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
+				resp.StatusCode,
+				resp.Header.Get("x-request-id"),
+				line,
+			)
 		}
 	}
 
@@ -519,6 +517,13 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		}
 		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, summary)
 	case 500, 502, 503, 504:
+		// Bedrock 内容过滤是请求级的确定性结果，按请求错误返回，客户端不应原样重试。
+		if account.IsBedrock() && isBedrockContentFilterError(resp.StatusCode, body) && upstreamMsg != "" {
+			statusCode = http.StatusBadRequest
+			errType = "invalid_request_error"
+			errMsg = upstreamMsg
+			break
+		}
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
 		errMsg = "Upstream service temporarily unavailable"
@@ -582,14 +587,12 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 
 	if isClaudeCodeCredentialScopeError(upstreamMsg) && c != nil {
-		if v, ok := c.Get(claudeMimicDebugInfoKey); ok {
-			if line, ok := v.(string); ok && strings.TrimSpace(line) != "" {
-				logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
-					resp.StatusCode,
-					resp.Header.Get("x-request-id"),
-					line,
-				)
-			}
+		if line := claudeMimicDebugLineFromContext(c); strings.TrimSpace(line) != "" {
+			logger.LegacyPrintf("service.gateway", "[ClaudeMimicDebugOnError] status=%d request_id=%s %s",
+				resp.StatusCode,
+				resp.Header.Get("x-request-id"),
+				line,
+			)
 		}
 	}
 
@@ -912,6 +915,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	}
 
 	needModelReplace := originalModel != mappedModel
+	clientModel := compositeClientModel(ctx, "")
 	clientDisconnected := false // 客户端断开标志，断开后继续读取上游以获取完整usage
 	sawTerminalEvent := false
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
@@ -1064,6 +1068,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if msg, ok := event["message"].(map[string]any); ok {
 				if model, ok := msg["model"].(string); ok && model == mappedModel {
 					msg["model"] = originalModel
+					eventChanged = true
+				}
+			}
+		}
+		if clientModel != "" && eventType == "message_start" {
+			if msg, ok := event["message"].(map[string]any); ok {
+				if _, ok := msg["model"].(string); ok {
+					msg["model"] = clientModel
 					eventChanged = true
 				}
 			}
@@ -1562,6 +1574,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	if originalModel != mappedModel {
 		body = s.replaceModelInResponseBody(body, mappedModel, originalModel)
 	}
+	body = restoreCompositeClientModel(ctx, body)
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 

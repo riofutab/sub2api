@@ -52,8 +52,20 @@ func ResponsesToAnthropic(resp *ResponsesResponse, model string) *AnthropicRespo
 				Type:  "tool_use",
 				ID:    fromResponsesCallID(item.CallID),
 				Name:  item.Name,
-				Input: sanitizeAnthropicToolUseInput(item.Name, item.Arguments),
+				Input: anthropicToolUseInput(item.Type, item.Name, item.Arguments),
 			})
+		case "custom_tool_call":
+			if !resp.RenderCustomToolCalls || (resp.XAIServerSideSearch && IsServerSideSearchCall(item.Type, item.CallID)) {
+				continue
+			}
+			blocks = append(blocks, AnthropicContentBlock{
+				Type:  "tool_use",
+				ID:    fromResponsesCallID(item.CallID),
+				Name:  item.Name,
+				Input: anthropicToolUseInput(item.Type, item.Name, item.Input),
+			})
+		case "tool_search_call":
+			blocks = append(blocks, toolSearchCallToolUse(item))
 		case "web_search_call":
 			toolUseID := "srvtoolu_" + item.ID
 			query := ""
@@ -139,6 +151,26 @@ func containsAnthropicToolUseBlock(blocks []AnthropicContentBlock) bool {
 	return false
 }
 
+// anthropicToolUseInput returns the input of a non-streaming tool_use block,
+// which must be a JSON object. An object is kept as it is. A function_call whose
+// arguments are not an object (truncated by max_output_tokens, or empty) gets {};
+// a custom_tool_call's free-form input is wrapped in the same {"input": ...}
+// shape that downgrades a custom tool to a function tool, so that
+// extractCustomToolCallInput gives the text back; an empty custom input is {} as
+// it is in the streamed tool_use.
+func anthropicToolUseInput(itemType, name, raw string) json.RawMessage {
+	if trimmed := strings.TrimSpace(raw); strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed)) {
+		return sanitizeAnthropicToolUseInput(name, raw)
+	}
+	if itemType == "custom_tool_call" && raw != "" {
+		wrapped, err := json.Marshal(map[string]string{"input": raw})
+		if err == nil {
+			return wrapped
+		}
+	}
+	return json.RawMessage("{}")
+}
+
 func sanitizeAnthropicToolUseInput(name string, raw string) json.RawMessage {
 	if name != "Read" || raw == "" {
 		return json.RawMessage(raw)
@@ -189,6 +221,11 @@ type ResponsesEventToAnthropicState struct {
 	// emitted as signature_delta before the thinking block is closed.
 	PendingThinkingSignature string
 	HasToolCall              bool
+
+	// XAIServerSideSearch is set by callers whose upstream is xAI. A
+	// custom_tool_call that IsServerSideSearchCall then never becomes a tool_use
+	// block, because xAI runs it itself.
+	XAIServerSideSearch bool
 
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
 	OutputIndexToBlockIdx map[int]int
@@ -349,6 +386,9 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	// function_call 与 custom_tool_call（custom/freeform 工具，如新版 apply_patch）
 	// 同样映射为 Anthropic 的 tool_use 块。
 	case "function_call", "custom_tool_call":
+		if state.XAIServerSideSearch && IsServerSideSearchCall(evt.Item.Type, evt.Item.CallID) {
+			return nil
+		}
 		var events []AnthropicStreamEvent
 		events = append(events, closeCurrentBlock(state)...)
 
@@ -622,6 +662,10 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 	// Handle web_search_call → synthesize server_tool_use + web_search_tool_result blocks.
 	if evt.Item.Type == "web_search_call" && evt.Item.Status == "completed" {
 		return resToAnthHandleWebSearchDone(evt, state)
+	}
+	// The native tool_search_call carries its arguments only on done.
+	if evt.Item.Type == "tool_search_call" {
+		return resToAnthHandleToolSearchDone(evt, state)
 	}
 
 	// Capture encrypted_content on reasoning item done (often only present here).

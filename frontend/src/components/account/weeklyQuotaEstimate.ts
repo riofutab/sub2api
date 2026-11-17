@@ -6,6 +6,7 @@ export function estimateWindowTotalCost(window?: UsageProgress | null): number |
   const utilization = window?.utilization
   const cost = window?.window_stats?.cost
   if (
+    window?.utilization_unknown ||
     typeof utilization !== 'number' || !Number.isFinite(utilization) || utilization <= 0 ||
     typeof cost !== 'number' || !Number.isFinite(cost) || cost <= 0
   ) return null

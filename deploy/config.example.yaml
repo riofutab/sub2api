@@ -384,6 +384,13 @@ gateway:
     ingress_inter_turn_idle_timeout_seconds: 300
     # Limit live client WebSocket ingress sessions per API key across all instances. Set 0 to disable.
     max_ingress_connections_per_api_key: 64
+    # Native WS current-window history for safe later-turn account migration.
+    # Retained JSON bodies + item overhead only, not total process memory or transient buffers.
+    # Limits apply per connection only; aggregate history usage is not capped.
+    # Any zero limit disables migration caching; negative limits are invalid.
+    # On exhaustion, healthy streams continue; unsafe migration asks the client to reconnect.
+    native_replay_max_session_bytes: 67108864
+    native_replay_max_items: 32768
     # 全局总开关，默认 true；关闭时所有请求保持原有 HTTP/SSE 路由
     enabled: true
     # 按账号类型细分开关
@@ -892,8 +899,8 @@ idempotency:
 # 并发等待配置
 # =============================================================================
 concurrency:
-  # SSE ping interval during concurrency wait (seconds)
-  # 并发等待期间的 SSE ping 间隔（秒）
+  # SSE ping interval during concurrency wait (seconds); 0 disables pings to avoid committing HTTP status early
+  # 并发等待期间的 SSE ping 间隔（秒）；0 禁用 ping，避免提前写入 HTTP 状态码
   ping_interval: 10
 
 # =============================================================================
@@ -1165,6 +1172,11 @@ pricing:
   # Gemini 显式缓存存储单价（每 token 每小时，USD）优先取这里的 cache_storage_cost_per_token_per_hour 字段，
   # 未配置时使用内置官方价（先按已发布型号，再按 Pro / Flash 系列兜底）；两者都没有的模型拒绝创建缓存。
   # 目录中不存在的模型条目还须同时提供 input_cost_per_token / output_cost_per_token。
+  # Explicit nonnegative DeepSeek input/output/cache-read token prices here,
+  # including zero, are final rates and do not receive the official peak multiplier.
+  # Omitted or null fields still use the official defaults and peak/off-peak rules.
+  # DeepSeek 的输入/输出/缓存读单价若在此显式设为非负值（含 0），按该价计费，
+  # 不叠加官方高峰倍率；省略或 null 的字段仍按官方默认价与峰谷规则计费。
   # override_file: "./data/model_pricing_overrides.json"
   # Update interval in hours
   # 更新间隔（小时）

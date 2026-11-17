@@ -126,11 +126,21 @@
 
     <!-- OpenAI OAuth accounts: single source from /usage API -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
+      <div
+        v-if="error || usageInfo?.error || usageInfo?.error_code"
+        role="alert"
+        class="mb-1 text-[10px] text-amber-700 dark:text-amber-300"
+      >
+        {{ t(hasOpenAIQuotaObservation
+          ? 'admin.accounts.usageWindow.quotaRefreshFailedCached'
+          : 'admin.accounts.usageWindow.quotaRefreshFailedUnknown') }}
+      </div>
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
           label="5h"
           :utilization="usageInfo.five_hour.utilization"
+          :utilization-unknown="usageInfo.five_hour.utilization_unknown"
           :resets-at="usageInfo.five_hour.resets_at"
           :window-stats="usageInfo.five_hour.window_stats"
           :show-now-when-idle="true"
@@ -140,12 +150,20 @@
           v-if="usageInfo?.seven_day"
           label="7d"
           :utilization="usageInfo.seven_day.utilization"
+          :utilization-unknown="usageInfo.seven_day.utilization_unknown"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
           :estimated-total-cost="sevenDayEstimatedTotalCost"
           :show-now-when-idle="true"
           color="emerald"
         />
+        <div v-if="hasOpenAIQuotaObservation" class="text-[10px] text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.usageWindow.quotaObservedAt') }}
+          <time v-if="usageInfo?.updated_at" :datetime="usageInfo.updated_at">
+            {{ formatDateTime(usageInfo.updated_at) }}
+          </time>
+          <span v-else>{{ t('admin.accounts.usageWindow.quotaObservationUnknown') }}</span>
+        </div>
         <!--
           Upstream codex /wham/usage quota query + reset. The local active-sampling
           refresh button is rendered via the pre-actions slot so the user sees a
@@ -753,9 +771,14 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import { buildOpenAIUsageRefreshKey, type BatchedUsageRequestOptions } from '@/utils/accountUsageRefresh'
+import {
+  buildAnthropicUsageRefreshKey,
+  buildGeminiUsageRefreshKey,
+  buildOpenAIUsageRefreshKey,
+  type BatchedUsageRequestOptions
+} from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
-import { formatCompactNumber } from '@/utils/format'
+import { formatCompactNumber, formatDateTime } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 import UsageProgressBar from './UsageProgressBar.vue'
@@ -901,9 +924,19 @@ const hasOpenAIUsageFallback = computed(() => {
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
+const hasOpenAIQuotaObservation = computed(() => {
+  const windows = [usageInfo.value?.five_hour, usageInfo.value?.seven_day]
+  return windows.some(window => window && !window.utilization_unknown)
+})
+
 const sevenDayEstimatedTotalCost = computed(() => estimateWindowTotalCost(usageInfo.value?.seven_day))
 
-const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))
+// Each builder returns '' for other platforms, so at most one contributes.
+const usageRefreshKey = computed(() => (
+  buildOpenAIUsageRefreshKey(props.account) ||
+  buildAnthropicUsageRefreshKey(props.account) ||
+  buildGeminiUsageRefreshKey(props.account)
+))
 
 const shouldAutoLoadUsageOnMount = computed(() => {
   return shouldFetchUsage.value
@@ -1611,13 +1644,22 @@ const attachVisibilityObserver = () => {
 }
 
 const loadActiveUsage = async () => {
+  const accountID = props.account.id
   activeQueryLoading.value = true
+  error.value = null
   try {
-    usageInfo.value = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
+    const result = await adminAPI.accounts.getUsage(accountID, 'active', true)
+    if (!unmounted.value && props.account.id === accountID) {
+      usageInfo.value = result
+      _usageCache.set(accountID, { data: result, ts: Date.now() })
+    }
   } catch (e: any) {
-    console.error('Failed to load active usage:', e)
+    if (!unmounted.value && props.account.id === accountID) {
+      error.value = t('common.error')
+      console.error('Failed to load active usage:', e)
+    }
   } finally {
-    activeQueryLoading.value = false
+    if (!unmounted.value) activeQueryLoading.value = false
   }
 }
 
@@ -1783,9 +1825,8 @@ watch(
   { flush: 'post' }
 )
 
-watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
+watch(usageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
 
   // 数据变化只绕过前端缓存；force 会让后端跳过探测缓存并回写 extra/updated_at，
   // 进而再次改变 key，形成每轮自动刷新都强制探测上游的循环。
@@ -1795,7 +1836,7 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   }
 
   _usageCache.delete(props.account.id)
-  requestAutoLoad()
+  requestAutoLoad(isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined)
 })
 
 watch(

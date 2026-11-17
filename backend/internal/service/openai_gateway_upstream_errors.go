@@ -309,6 +309,65 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	}
 }
 
+const (
+	openAICodexInvalidPromptCode            = "invalid_prompt"
+	openAICodexInvalidPromptUsagePolicyText = "prompt was flagged as potentially violating our usage policy"
+)
+
+// isOpenAICodexInvalidPromptUsagePolicyFalsePositive recognizes the account-scoped
+// Codex false positive where every prompt (even "hello") is rejected for a model
+// family such as gpt-6. The response must carry OpenAI's exact usage-policy
+// sentence and either the structured invalid_prompt code/type or the
+// "Invalid prompt:" prefix; generic content-policy text, echoed request content,
+// and ordinary 400s never match.
+func isOpenAICodexInvalidPromptUsagePolicyFalsePositive(body []byte) bool {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return false
+	}
+	marker := ""
+	for _, path := range []string{"error.code", "response.error.code", "detail.code", "code"} {
+		if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+			marker = strings.ToLower(value)
+			break
+		}
+	}
+	if marker != openAICodexInvalidPromptCode {
+		for _, path := range []string{"error.type", "response.error.type", "type"} {
+			if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+				marker = strings.ToLower(value)
+				break
+			}
+		}
+	}
+	message := ""
+	for _, path := range []string{"error.message", "response.error.message", "detail", "message"} {
+		if value := strings.TrimSpace(gjson.GetBytes(body, path).String()); value != "" {
+			message = strings.ToLower(value)
+			break
+		}
+	}
+	if !strings.Contains(message, openAICodexInvalidPromptUsagePolicyText) {
+		return false
+	}
+	// Some intermediaries drop error.code/type; OpenAI's exact "Invalid prompt:"
+	// prefix still identifies this rejection without matching generic policy text.
+	return marker == openAICodexInvalidPromptCode || strings.HasPrefix(message, "invalid prompt:")
+}
+
+// isOpenAICodexInvalidPromptFalsePositive scopes the marker to Codex OAuth-like
+// accounts and the statuses this rejection is observed with. API-key content
+// rejections remain terminal so a real policy violation is never replayed across
+// the account pool.
+func isOpenAICodexInvalidPromptFalsePositive(account *Account, statusCode int, body []byte) bool {
+	if account == nil || account.Platform != PlatformOpenAI || !account.IsOpenAIOAuthLike() {
+		return false
+	}
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
+		return false
+	}
+	return isOpenAICodexInvalidPromptUsagePolicyFalsePositive(body)
+}
+
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Account, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	// cyber_policy is request-scoped even when an intermediary wraps the
 	// provider response in a retryable 5xx status. Never punish or rotate the
@@ -320,6 +379,12 @@ func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(account *Acc
 		return false
 	}
 	if isOpenAIShortInputPolicyError(statusCode, upstreamBody) {
+		return true
+	}
+	// Codex 的 gpt-6 系列偶发把正常提示词误判为 usage policy 违规（openai/codex#52846）。
+	// 这是账号/模型维度的问题，同账号重试必然复现，换号才有机会成功；但绝不能
+	// 把账号标记为不健康。
+	if isOpenAICodexInvalidPromptFalsePositive(account, statusCode, upstreamBody) {
 		return true
 	}
 	if isOpenAIHTTPUpstreamAccessStateError(statusCode, upstreamMsg, upstreamBody) {
@@ -496,7 +561,26 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
 	}
+	if !shouldDisable && account != nil && account.IsPoolMode() && isOpenAIRelayGenericUpstreamFailure(statusCode, responseBody) {
+		failoverErr.RetryableOnSameAccount = true
+		failoverErr.SameAccountRetryMax = 1
+	}
 	return failoverErr
+}
+
+// A relay's fixed generic failure is distinct from its deterministic
+// "Upstream rejected the request" response. Match only the known envelope;
+// arbitrary upstream_error messages and invalid_request errors stay terminal.
+func isOpenAIRelayGenericUpstreamFailure(statusCode int, body []byte) bool {
+	if statusCode != http.StatusBadRequest || !gjson.ValidBytes(body) ||
+		!strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "error.type").String()), "upstream_error") {
+		return false
+	}
+	if code := strings.TrimSpace(gjson.GetBytes(body, "error.code").String()); code != "" && !strings.EqualFold(code, "upstream_error") {
+		return false
+	}
+	message := strings.TrimSpace(gjson.GetBytes(body, "error.message").String())
+	return message == "Upstream request failed" || strings.HasPrefix(message, "Upstream request failed（")
 }
 
 const (
@@ -770,8 +854,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		reqModel = canonicalOpenAIAccountSchedulingModel(account, reqModel)
 	}
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, body, reqModel)
+	relayRetry := account.IsPoolMode() && isOpenAIRelayGenericUpstreamFailure(resp.StatusCode, body)
 	kind := "http_error"
-	if shouldDisable {
+	if shouldDisable || relayRetry {
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -792,6 +877,9 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			ResponseBody:           body,
 			RetryableOnSameAccount: false,
 		}
+	}
+	if relayRetry {
+		return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, body, upstreamMsg, false, false)
 	}
 
 	MarkResponseCommitted(c)
@@ -976,8 +1064,9 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	shouldDisable := s.handleOpenAIAccountUpstreamError(
 		c.Request.Context(), account, resp.StatusCode, resp.Header, body, modelForCooldown,
 	)
+	relayRetry := account.IsPoolMode() && isOpenAIRelayGenericUpstreamFailure(resp.StatusCode, body)
 	kind := "http_error"
-	if shouldDisable {
+	if shouldDisable || relayRetry {
 		kind = "failover"
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -998,6 +1087,9 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			ResponseBody:           body,
 			RetryableOnSameAccount: false,
 		}
+	}
+	if relayRetry {
+		return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, body, upstreamMsg, false, false)
 	}
 
 	MarkResponseCommitted(c)

@@ -692,7 +692,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			if req.Stream {
 				action = "streamGenerateContent"
 			}
-			fullURL, err := buildVertexGeminiAccountURL(account, mappedModel, action, req.Stream)
+			fullURL, err := buildVertexGeminiAccountURL(account, mappedModel, action, req.Stream, "")
 			if err != nil {
 				return nil, "", err
 			}
@@ -815,12 +815,14 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			break
 		}
 
-		// 错误策略优先：匹配则跳过重试直接处理。
-		checked, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp, mappedModel)
-		resp = rebuilt
-		checkedPolicy = checked
-		if checked != nil && *checked != ErrorPolicyNone {
-			break
+		// 403 先做跨账号确认，不能在这里写入账号策略状态。
+		if resp.StatusCode != http.StatusForbidden {
+			checked, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp, mappedModel)
+			resp = rebuilt
+			checkedPolicy = checked
+			if checked != nil && *checked != ErrorPolicyNone {
+				break
+			}
 		}
 
 		if resp.StatusCode >= 400 && s.shouldRetryGeminiUpstreamError(account, resp.StatusCode) {
@@ -887,6 +889,20 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
+		// 请求内容与账号鉴权都可能返回同一条 403：第一个账号只换号，
+		// 另一个账号成功后再回补处理；两个不同账号都 403 则判为请求级。
+		if resp.StatusCode == http.StatusForbidden {
+			upstreamReqID := resp.Header.Get(requestIDHeader)
+			if upstreamReqID == "" {
+				upstreamReqID = resp.Header.Get("x-goog-request-id")
+			}
+			switch s.classifyGemini403ForRequest(c, account, resp.StatusCode, resp.Header, respBody, mappedModel) {
+			case gemini403RequestScoped:
+				return nil, s.writeGeminiClaudeRequestScoped403(c, account, respBody, upstreamReqID)
+			case gemini403Defer:
+				return nil, s.gemini403DeferredFailoverError(c, account, resp, respBody, upstreamReqID)
+			}
+		}
 		// 统一错误策略：自定义错误码 + 临时不可调度
 		if s.rateLimitService != nil {
 			policy := s.finalErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel, checkedPolicy)
@@ -1011,6 +1027,8 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		return nil, s.writeGeminiMappedError(c, account, resp.StatusCode, upstreamReqID, respBody)
 	}
 
+	s.confirmDeferredGemini403(ctx, c, account)
+
 	requestID := resp.Header.Get(requestIDHeader)
 	if requestID == "" {
 		requestID = resp.Header.Get("x-goog-request-id")
@@ -1081,6 +1099,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
+		UpstreamPriceMultiplier:       VertexUpstreamPriceMultiplier(account, mappedModel, ""),
 	}, nil
 }
 
@@ -1147,6 +1166,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 	var requestIDHeader string
 	var buildReq func(ctx context.Context) (*http.Request, string, error)
+	// cachedContentLocation 是 Vertex 账号请求引用的显式缓存所在区域，未引用时为空。
+	var cachedContentLocation string
 
 	switch account.Type {
 	case AccountTypeAPIKey:
@@ -1247,8 +1268,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		requestIDHeader = "x-request-id"
 
 	case AccountTypeServiceAccount:
+		cachedContentLocation = geminiCachedContentLocationInBody(body)
 		buildReq = func(ctx context.Context) (*http.Request, string, error) {
-			fullURL, err := buildVertexGeminiAccountURL(account, mappedModel, upstreamAction, useUpstreamStream)
+			fullURL, err := buildVertexGeminiAccountURL(account, mappedModel, upstreamAction, useUpstreamStream, cachedContentLocation)
 			if err != nil {
 				return nil, "", err
 			}
@@ -1321,12 +1343,14 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			resp = rebuilt
 		}
 
-		// 错误策略优先：匹配则跳过重试直接处理。
-		checked, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp, mappedModel)
-		resp = rebuilt
-		checkedPolicy = checked
-		if checked != nil && *checked != ErrorPolicyNone {
-			break
+		// 403 先做跨账号确认；其余状态仍按错误策略优先处理。
+		if resp.StatusCode != http.StatusForbidden {
+			checked, rebuilt := s.checkErrorPolicyInLoop(ctx, account, resp, mappedModel)
+			resp = rebuilt
+			checkedPolicy = checked
+			if checked != nil && *checked != ErrorPolicyNone {
+				break
+			}
 		}
 
 		if resp.StatusCode >= 400 && s.shouldRetryGeminiUpstreamError(account, resp.StatusCode) {
@@ -1440,6 +1464,17 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}, nil
 		}
 
+		// 请求内容与账号鉴权都可能返回同一条 403：第一个账号只换号，
+		// 另一个账号成功后再回补处理；两个不同账号都 403 则判为请求级。
+		if resp.StatusCode == http.StatusForbidden {
+			switch s.classifyGemini403ForRequest(c, account, resp.StatusCode, resp.Header, respBody, mappedModel) {
+			case gemini403RequestScoped:
+				return nil, s.writeGeminiNativeRequestScoped403(c, account, unwrapIfNeeded(isOAuth, respBody), requestID)
+			case gemini403Defer:
+				return nil, s.gemini403DeferredFailoverError(c, account, resp, unwrapIfNeeded(isOAuth, respBody), requestID)
+			}
+		}
+
 		// 统一错误策略：自定义错误码 + 临时不可调度
 		if s.rateLimitService != nil {
 			policy := s.finalErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel, checkedPolicy)
@@ -1548,6 +1583,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		return nil, s.writeGeminiNativeUpstreamError(c, account, resp, respBody, requestID, isOAuth)
 	}
 
+	s.confirmDeferredGemini403(ctx, c, account)
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	clientDisconnect := false
@@ -1618,6 +1655,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
+		UpstreamPriceMultiplier:       VertexUpstreamPriceMultiplier(account, mappedModel, cachedContentLocation),
 	}, nil
 }
 
@@ -2228,6 +2266,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	openToolIndex := -1
 	openToolID := ""
 	openToolName := ""
+	var toolBoundary geminiToolCallBoundary
 	var seenToolJSON geminiTextDelta
 
 	reader := newBoundedSSELineReader(resp.Body, s.cfg)
@@ -2295,6 +2334,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 				if openBlockType != "thinking" {
 					if openBlockIndex >= 0 {
@@ -2346,6 +2386,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 
 				delta := seenText.next(text)
@@ -2391,7 +2432,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 
 			if fc, ok := part["functionCall"].(map[string]any); ok && fc != nil {
 				name, _ := fc["name"].(string)
-				args := fc["args"]
 				if strings.TrimSpace(name) == "" {
 					name = "tool"
 				}
@@ -2407,7 +2447,8 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				}
 
 				// If we receive streamed tool args in pieces, keep a single tool block open and emit deltas.
-				if openToolIndex >= 0 && !geminiFunctionCallContinuesOpenTool(openToolName, seenToolJSON.seen.String(), name) {
+				argsJSONText := geminiToolCallArgsJSON(fc["args"])
+				if openToolIndex >= 0 && toolBoundary.startsNewBlock(openToolName, seenToolJSON.seen.String(), argsJSONText, fc) {
 					writeSSE(c.Writer, "content_block_stop", map[string]any{
 						"type":  "content_block_stop",
 						"index": openToolIndex,
@@ -2415,6 +2456,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 
 				if openToolIndex < 0 {
@@ -2436,21 +2478,8 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					})
 				}
 
-				argsJSONText := "{}"
-				switch v := args.(type) {
-				case nil:
-					// keep default "{}"
-				case string:
-					if strings.TrimSpace(v) != "" {
-						argsJSONText = v
-					}
-				default:
-					if b, err := json.Marshal(args); err == nil && len(b) > 0 {
-						argsJSONText = string(b)
-					}
-				}
-
 				delta := seenToolJSON.next(argsJSONText)
+				toolBoundary.observe(fc)
 				if delta != "" {
 					writeSSE(c.Writer, "content_block_delta", map[string]any{
 						"type":  "content_block_delta",
@@ -3470,19 +3499,6 @@ func (d *geminiTextDelta) next(incoming string) string {
 
 func (d *geminiTextDelta) reset() {
 	d.seen.Reset()
-}
-
-// geminiFunctionCallContinuesOpenTool 判断流式响应中的 functionCall part 是否应并入
-// 当前已打开的 tool_use 块。Gemini 每个 functionCall part 携带完整参数，只有当已
-// 累积参数尚不是合法 JSON（确实处于分片中）时才视为同一调用的续传；否则同名的下一个
-// functionCall 是新的并行调用（包括两次参数相同的无参调用），必须开新块。
-// 仅按工具名判断会把并行的同名调用合成一个，参数被拼接成 {"a":1}{"a":2}。
-func geminiFunctionCallContinuesOpenTool(openName, seenArgs, name string) bool {
-	if openName != name {
-		return false
-	}
-	seen := strings.TrimSpace(seenArgs)
-	return seen == "" || !json.Valid([]byte(seen))
 }
 
 func mapGeminiFinishReasonToClaudeStopReason(finishReason string) string {

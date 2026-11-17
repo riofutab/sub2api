@@ -686,6 +686,15 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 	}
 
 	if finalResponse == nil {
+		if account != nil && !c.Writer.Written() && !IsResponseCommitted(c) {
+			// The buffered attempt has not reached the client. A relay may end
+			// deterministically (for example after an unrecognized error frame),
+			// so permit at most one same-account replay and do not punish the key.
+			failoverErr := s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, nil, "Upstream stream ended without a terminal response event", upstreamModel, resp.Header)
+			failoverErr.Scope = GatewayFailureScopeProvider
+			failoverErr.SameAccountRetryMax = 1
+			return nil, failoverErr
+		}
 		writeChatCompletionsError(c, http.StatusBadGateway, "api_error", "Upstream stream ended without a terminal response event")
 		return nil, fmt.Errorf("upstream stream ended without terminal event")
 	}
@@ -717,7 +726,7 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 			return nil, fmt.Errorf("openai cyber_policy: %s", msg)
 		}
 		message := openAICompatFailedResponseMessage(finalResponse)
-		if openAIStreamFailedEventShouldFailover(payload, message) {
+		if openAIStreamFailedEventShouldFailoverForAccount(c, account, payload, message) {
 			return nil, s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payload, message, upstreamModel, resp.Header)
 		}
 		message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payload, message)
@@ -843,6 +852,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 
 	state := apicompat.NewResponsesEventToChatState()
 	state.Model = originalModel
+	state.XAIServerSideSearch = account != nil && account.IsGrok()
 	// 网关作为计费链路的一环，不能把下游 usage 输出绑定到客户端是否显式请求。
 	// raw Chat Completions 直转路径已经强制透出 usage，这里保持同样行为，避免级联代理计费为 0。
 	state.IncludeUsage = true
@@ -970,7 +980,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				return true
 			}
-			shouldFailover := openAIStreamFailedEventShouldFailover(payloadBytes, message)
+			shouldFailover := openAIStreamFailedEventShouldFailoverForAccount(c, account, payloadBytes, message)
 			if strings.TrimSpace(event.Type) == "error" {
 				shouldFailover = openAIStreamErrorEventShouldFailover(payloadBytes, message)
 			}
@@ -978,6 +988,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				streamFailoverErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, payloadBytes, message, upstreamModel, resp.Header)
 				return true
 			}
+			s.handleOpenAIStreamTerminalAccountSideEffects(c, account, payloadBytes, message, resp.Header, upstreamModel)
 			message = s.recordOpenAIStreamUpstreamError(c, account, false, requestID, "http_error", payloadBytes, message)
 			defaultStatus, defaultErrType, defaultMsg := http.StatusBadGateway, "upstream_error", message
 			// 统一走语义状态推断 + body 归一化（与 /v1/responses 路径一致），
@@ -1027,7 +1038,11 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					)
 					continue
 				}
-				if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
+				// response.created converts to one role-only chunk (SentRole in
+				// the converter bounds this to one). It is not semantic output:
+				// committing it would prevent retrying an immediate overload even
+				// for short requests where silent-refusal detection is disabled.
+				if !clientOutputStarted && (event.Type == "response.created" || !refusalDetector.ShouldReleaseClientOutput()) {
 					pendingSSE = append(pendingSSE, sse)
 					continue
 				}

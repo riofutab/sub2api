@@ -12,9 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -334,17 +336,20 @@ func extractSystemPreviewFromBody(body []byte) string {
 
 	switch {
 	case sys.IsArray():
-		for _, item := range sys.Array() {
+		var preview string
+		sys.ForEach(func(_, item gjson.Result) bool {
 			if !item.IsObject() {
-				continue
+				return true
 			}
 			if strings.EqualFold(item.Get("type").String(), "text") {
 				if t := item.Get("text").String(); strings.TrimSpace(t) != "" {
-					return t
+					preview = t
+					return false
 				}
 			}
-		}
-		return ""
+			return true
+		})
+		return preview
 	case sys.Type == gjson.String:
 		return sys.String()
 	default:
@@ -381,7 +386,7 @@ func buildClaudeMimicDebugLine(req *http.Request, body []byte, account *Account,
 
 	h := make([]string, 0, len(interesting))
 	for _, k := range interesting {
-		if v := req.Header.Get(k); v != "" {
+		if v := getHeaderRaw(req.Header, k); v != "" {
 			h = append(h, fmt.Sprintf("%s=%q", k, safeHeaderValueForLog(k, v)))
 		}
 	}
@@ -414,6 +419,64 @@ func buildClaudeMimicDebugLine(req *http.Request, body []byte, account *Account,
 		sysPreview,
 		strings.Join(h, " "),
 	)
+}
+
+// claudeMimicDebugLine defers building the diagnostics line until an error
+// path actually needs it. The line is read only on Claude Code credential-scope
+// errors, so building it eagerly cost every OAuth request a header walk, a
+// system-prompt scan and several fmt.Sprintf calls for nothing.
+type claudeMimicDebugLine struct {
+	once            sync.Once
+	req             *http.Request
+	body            []byte
+	account         *Account
+	tokenType       string
+	mimicClaudeCode bool
+	line            string
+}
+
+func newClaudeMimicDebugLine(req *http.Request, body []byte, account *Account, tokenType string, mimicClaudeCode bool) *claudeMimicDebugLine {
+	return &claudeMimicDebugLine{
+		req:             req,
+		body:            body,
+		account:         account,
+		tokenType:       tokenType,
+		mimicClaudeCode: mimicClaudeCode,
+	}
+}
+
+func (l *claudeMimicDebugLine) String() string {
+	if l == nil {
+		return ""
+	}
+	l.once.Do(func() {
+		l.line = buildClaudeMimicDebugLine(l.req, l.body, l.account, l.tokenType, l.mimicClaudeCode)
+		// Drop references so the request/body are not retained after use.
+		l.req, l.body, l.account = nil, nil, nil
+	})
+	return l.line
+}
+
+// claudeMimicDebugLineFromContext returns the stored diagnostics line, building
+// it on first use. It also accepts a plain string for compatibility.
+func claudeMimicDebugLineFromContext(c interface {
+	Get(string) (any, bool)
+}) string {
+	if c == nil {
+		return ""
+	}
+	v, ok := c.Get(claudeMimicDebugInfoKey)
+	if !ok {
+		return ""
+	}
+	switch line := v.(type) {
+	case *claudeMimicDebugLine:
+		return line.String()
+	case string:
+		return line
+	default:
+		return ""
+	}
 }
 
 func logClaudeMimicDebug(req *http.Request, body []byte, account *Account, tokenType string, mimicClaudeCode bool) {
@@ -693,6 +756,17 @@ type ForwardResult struct {
 	// CacheStorageTokenHours 显式上下文缓存的存储量（缓存 token 数 × 存储小时数），按计费模型的
 	// 存储单价折算为费用后叠加在 token 费用之上。
 	CacheStorageTokenHours float64
+	// UpstreamPriceMultiplier 是上游按实际请求端点计价相对计费模型价格的倍数（见 VertexUpstreamPriceMultiplier），
+	// 只作用于 token 费用；0 按 1 处理。
+	UpstreamPriceMultiplier float64
+}
+
+// upstreamPriceFactor 返回 UpstreamPriceMultiplier，未设置时为 1。
+func (r *ForwardResult) upstreamPriceFactor() float64 {
+	if r == nil || r.UpstreamPriceMultiplier <= 0 {
+		return 1
+	}
+	return r.UpstreamPriceMultiplier
 }
 
 // GatewayFailureStage identifies which request stage failed. The zero value is
@@ -747,6 +821,7 @@ type UpstreamFailoverError struct {
 	NextAccountAction        NextAccountAction
 	ClientStatusCode         int
 	ClientMessage            string
+	StreamFailedFrame        *OpenAIStreamFailedFrame // 触发本次 failover 的流内 failed/error 帧；耗尽时用于错误透传规则匹配
 }
 
 func (e *UpstreamFailoverError) Error() string {
@@ -799,10 +874,28 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	// 根据状态码选择封禁策略
 	switch failoverErr.StatusCode {
 	case http.StatusBadRequest:
+		if s.isPoolModeConfiguredRetryStatus(ctx, accountID, failoverErr.StatusCode) {
+			return
+		}
 		tempUnscheduleGoogleConfigError(ctx, s.accountRepo, accountID, "[handler]")
 	case http.StatusBadGateway:
+		if s.isPoolModeConfiguredRetryStatus(ctx, accountID, failoverErr.StatusCode) {
+			return
+		}
 		tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
 	}
+}
+
+// Explicitly configured pool retry statuses describe attempts within the
+// upstream pool, not failure of the local credential. Exhaust the request's
+// retry budget without cooling every request using that pool account.
+// Missing configuration or a failed lookup preserves the existing cooldown.
+func (s *GatewayService) isPoolModeConfiguredRetryStatus(ctx context.Context, accountID int64, statusCode int) bool {
+	if s == nil || s.accountRepo == nil {
+		return false
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	return err == nil && account != nil && account.IsPoolMode() && slices.Contains(account.GetPoolModeRetryStatusCodes(), statusCode)
 }
 
 // GatewayService handles API gateway operations
@@ -957,7 +1050,8 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		)
 	}
 
-	// 2. 提取带 cache_control: {type: "ephemeral"} 的内容
+	// 2. 提取带 cache_control: {type: "ephemeral"} 的内容。首个断点排在首条非 system 消息
+	// 之后的请求跳过本步，这类断点随轮次后移，按它取 key 会让同一对话每轮换号。
 	cacheableContent := s.extractCacheableContent(parsed)
 	if cacheableContent != "" {
 		hash := s.hashContent(cacheableContent)
@@ -968,7 +1062,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		return hash
 	}
 
-	// 3. 最后 fallback: 使用 session上下文 + system + 所有消息的完整摘要串
+	// 3. 最后 fallback: session上下文 + system + 开头的 system/developer 消息 + 首条其他消息，同一对话各轮的锚点相同
 	var combined strings.Builder
 	// 混入请求上下文区分因子，避免不同用户相同消息产生相同 hash
 	if parsed.SessionContext != nil {
@@ -983,7 +1077,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		_, _ = combined.WriteString(systemText)
 	}
 	contentStart := combined.Len()
-	appendMessageTextsFromRaw(&combined, parsed.MessagesRaw())
+	appendFirstMessageTextFromRaw(&combined, parsed.MessagesRaw())
 	if combined.Len() == contentStart {
 		appendResponsesSessionAnchorFromRaw(&combined, parsed.InputRaw())
 	}
@@ -1098,7 +1192,11 @@ func (s *GatewayService) extractCacheableContent(parsed *ParsedRequest) string {
 	}
 
 	systemText := extractCacheableTextFromSystemRaw(parsed.SystemRaw())
-	if messageText := extractCacheableTextFromMessagesRaw(parsed.MessagesRaw()); messageText != "" {
+	messageText, afterAnchor := extractCacheableTextFromMessagesRaw(parsed.MessagesRaw())
+	if afterAnchor {
+		return ""
+	}
+	if messageText != "" {
 		return messageText
 	}
 	return systemText
@@ -1155,7 +1253,10 @@ func extractTextFromContentRaw(content gjson.Result) string {
 	return ""
 }
 
-func appendMessageTextsFromRaw(builder *strings.Builder, raw []byte) {
+// appendFirstMessageTextFromRaw 写入开头的 system/developer 消息和第一条有文本的其他消息的文本。
+// chat_completions 的 system 提示在 messages 里；只取 messages[0] 会让同一客户端的所有对话共用一个 key。
+// 没有文本的消息（纯图片、content 为 null 的 tool_calls）不作锚点，否则这类对话会塌成同一个 key。
+func appendFirstMessageTextFromRaw(builder *strings.Builder, raw []byte) {
 	if builder == nil || len(raw) == 0 {
 		return
 	}
@@ -1164,21 +1265,27 @@ func appendMessageTextsFromRaw(builder *strings.Builder, raw []byte) {
 		return
 	}
 	messages.ForEach(func(_, msg gjson.Result) bool {
-		if content := msg.Get("content"); content.Exists() {
-			_, _ = builder.WriteString(extractTextFromContentRaw(content))
+		if isInstructionMessageRole(msg.Get("role").String()) {
+			_, _ = builder.WriteString(extractTextFromContentRaw(msg.Get("content")))
 			return true
 		}
-		parts := msg.Get("parts")
-		if parts.IsArray() {
-			parts.ForEach(func(_, part gjson.Result) bool {
+		before := builder.Len()
+		if content := msg.Get("content"); content.Exists() {
+			_, _ = builder.WriteString(extractTextFromContentRaw(content))
+		} else {
+			msg.Get("parts").ForEach(func(_, part gjson.Result) bool {
 				if text := part.Get("text").String(); text != "" {
 					_, _ = builder.WriteString(text)
 				}
 				return true
 			})
 		}
-		return true
+		return builder.Len() == before
 	})
+}
+
+func isInstructionMessageRole(role string) bool {
+	return role == "system" || role == "developer"
 }
 
 func appendResponsesSessionAnchorFromRaw(builder *strings.Builder, raw []byte) {
@@ -1257,32 +1364,37 @@ func extractCacheableTextFromSystemRaw(raw []byte) string {
 	return builder.String()
 }
 
-func extractCacheableTextFromMessagesRaw(raw []byte) string {
+// extractCacheableTextFromMessagesRaw 返回第一条带 ephemeral 断点的消息的文本。
+// afterAnchor 表示该消息排在首条非 system/developer 消息之后：这样的断点随轮次后移，不能作粘性 key。
+func extractCacheableTextFromMessagesRaw(raw []byte) (text string, afterAnchor bool) {
 	messages := parseRawJSONView(raw)
 	if !messages.IsArray() {
-		return ""
+		return "", false
 	}
-	var text string
+	anchorSeen := false
 	messages.ForEach(func(_, msg gjson.Result) bool {
 		content := msg.Get("content")
-		if !content.IsArray() {
-			return true
-		}
-		found := false
-		content.ForEach(func(_, part gjson.Result) bool {
-			if part.Get("cache_control.type").String() == "ephemeral" {
-				found = true
+		if content.IsArray() {
+			found := false
+			content.ForEach(func(_, part gjson.Result) bool {
+				if part.Get("cache_control.type").String() == "ephemeral" {
+					found = true
+					return false
+				}
+				return true
+			})
+			if found {
+				text = extractTextFromContentRaw(content)
+				afterAnchor = anchorSeen
 				return false
 			}
-			return true
-		})
-		if found {
-			text = extractTextFromContentRaw(content)
-			return false
+		}
+		if !isInstructionMessageRole(msg.Get("role").String()) {
+			anchorSeen = true
 		}
 		return true
 	})
-	return text
+	return text, afterAnchor
 }
 
 func (s *GatewayService) hashContent(content string) string {
@@ -1473,12 +1585,12 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	hasAnyMapping := false
 
 	for _, acc := range accounts {
-		// Passthrough routing accepts models independently of model_mapping, so a
+		// Default passthrough accepts models independently of model_mapping, so a
 		// stale mapping on a passthrough account must not narrow the public list.
 		// Treat it like an unmapped account: skip its mapping here and let
 		// supplementUnmappedOpenAIModels contribute the default set. Mappings on
 		// the ordinary accounts in the same group still count.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() && !acc.IsOpenAIPassthroughModelFilterEnabled() {
 			continue
 		}
 

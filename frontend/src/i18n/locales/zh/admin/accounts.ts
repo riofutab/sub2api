@@ -555,6 +555,10 @@ export default {
         grokLastHeadersSeen: '响应头 {time}',
         passiveSampled: '被动采样',
         activeQuery: '查询',
+        quotaRefreshFailedCached: '刷新失败，当前显示历史额度，不能确认剩余额度。',
+        quotaRefreshFailedUnknown: '刷新失败，当前额度未知。',
+        quotaObservedAt: '额度采样时间：',
+        quotaObservationUnknown: '未知（历史缓存）',
         estimatedTotalCost: '预计总费用 ${cost}',
         estimatedTotalCostTooltip: '根据当前窗口费用和使用率估算达到 100% 使用率时的总费用'
       },
@@ -777,6 +781,9 @@ export default {
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',
+        passthroughModelFilter: '透传时按账号模型筛选',
+        passthroughModelFilterDesc:
+          '使用账号模型白名单与映射的来源模型名筛选候选账号，映射目标不会改写透传请求的模型名。列表为空时允许所有模型。默认关闭。',
         flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
         flattenNamespacesDesc:
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
@@ -881,7 +888,7 @@ export default {
         testMode: '测试模式',
         testModeDefault: '常规请求',
         testModeCompact: 'Compact 探测',
-        modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
+        modelRestrictionDisabledByPassthrough: '自动透传默认忽略模型限制；开启“透传时按账号模型筛选”后，模型限制仅用于筛选候选账号。',
       },
       grok: {
         baseUrlHint: 'Grok OAuth 账号会转发到官方 xAI API Base URL。',
@@ -981,6 +988,7 @@ export default {
       enterCustomModelName: '输入自定义模型名称',
       addModel: '填入',
       modelExists: '该模型已存在',
+      modelWildcardNotSupported: '模型白名单不支持通配符，请输入完整的模型名称。',
       modelMappingConflict: '该模型已配置映射 {from} → {to}，请在模型映射中修改或删除后再添加白名单模型',
       modelCount: '{count} 个模型',
       poolMode: '池模式',
@@ -1151,14 +1159,24 @@ export default {
 	    expiresAt: '到期 {time}',
 	    expiresAtFull: '重置次数到期时间：{time}',
 	    clears: '可清除窗口：{windows}',
-	    notUsableNow: '暂不可用',
 	    requiresLimit: '需达到限额后才能使用',
 	    reset: '重置',
 	    resetTooltipNeedQuery: '请先点「次数」查询；查询到可用的重置后才能使用',
 	    resetTooltipNone: '当前没有可立即使用的重置',
 	    resetTooltipReady: '消耗 1 次重置，清除限额窗口（需确认）',
 	    confirmTitle: '确认使用 Claude 重置',
-	    confirmMessage: '将消耗 1 次重置次数，立即恢复 {windows} 窗口，剩余 {count} 次。此操作不可撤销，确定继续吗？',
+	    confirmMessage: '将消耗 1 次「{kind}」重置，立即恢复 {windows} 窗口，该类型剩余 {count} 次。此操作不可撤销，确定继续吗？',
+	    chooseKind: '选择要使用的重置类型',
+	    chooseKindRequired: '请先选择要使用的重置类型',
+	    fableNote: 'Fable 重置只退还 Fable 用掉的周额度，不会重置整周。',
+	    nothingToReset: '{kind}：暂无可重置的用量',
+	    kindNotUsableNow: '{kind}：暂不可用',
+	    kinds: {
+	      session: '5h',
+	      weekly: '周',
+	      full: '完整',
+	      fable: 'Fable'
+	    },
 	    windows: {
 	      fiveHour: '5h',
 	      sevenDay: '7d',

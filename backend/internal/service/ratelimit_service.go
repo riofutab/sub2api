@@ -448,6 +448,11 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			return false
 		}
 	}
+	if account.IsBedrock() {
+		if handled, disable := s.handleBedrockUpstreamError(ctx, account, statusCode, upstreamMsg, firstRequestedModel(requestedModel)); handled {
+			return disable
+		}
+	}
 
 	switch statusCode {
 	case 400:
@@ -499,8 +504,10 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 			break
 		}
-		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		if authAccount.Type == AccountTypeOAuth {
+		// OAuth / setup-token 账号在 401 错误时临时不可调度（给 token 刷新或重新读取凭据的窗口）；
+		// 其余账号保持原有 SetError 行为。setup-token 通常没有 refresh_token，一次瞬时 401
+		// 不等于凭据永久失效，不能直接永久禁用。
+		if authAccount.IsOAuth() {
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
@@ -509,7 +516,9 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			}
 			// 缺少 refresh_token 的 OAuth 账号无法在冷却期内自愈（后台刷新服务也会跳过），
 			// 直接走 SetError 永久禁用，避免冷却结束后再被选中产生一发无意义的 502。
-			if strings.TrimSpace(authAccount.GetCredential("refresh_token")) == "" {
+			// setup-token 不走该分支：它本身通常没有 refresh_token，但仍可依靠缓存失效后
+			// 重新读取持久化凭据或人工复测恢复。
+			if authAccount.Type == AccountTypeOAuth && strings.TrimSpace(authAccount.GetCredential("refresh_token")) == "" {
 				msg := "Authentication failed (401): refresh_token missing, cannot recover"
 				if upstreamMsg != "" {
 					msg = "OAuth 401 (no refresh_token): " + upstreamMsg
@@ -1666,7 +1675,48 @@ func (s *RateLimitService) persistAnthropicExhaustedWindowLimit(ctx context.Cont
 const (
 	anthropicFableWindowReason          = "anthropic_7d_oi_window_exhausted"
 	anthropicFableCreditsRequiredReason = "anthropic_fable_credits_required"
+
+	// anthropicFableWindowRecoveredUtilization 是判定 7d_oi 窗口已恢复的用量上限。
+	// 上游明确回报利用率低于该值（重置卡生效、窗口滚动）时撤销窗口耗尽写入的限流；
+	// 留出余量避免贴着 1.0 的采样来回抖动。
+	anthropicFableWindowRecoveredUtilization = 0.95
 )
+
+// recoverAnthropicFableWindowLimit 在上游明确回报 7d_oi 用量已回落到耗尽线以下时，
+// 撤销此前由窗口耗尽写入的 claude-fable-5 模型级限流。
+//
+// 三条约束：
+//  1. 只有明确拿到利用率才判断；缺失一律不动，缺失不等于 0；
+//  2. 只撤销 anthropicFableWindowReason 来源的限流——积分不足（credits required）
+//     与管理端阈值来源的语义不同，不能被窗口用量顺手清掉；
+//  3. 只清 claude-fable-5 这一个 scope，不影响其他模型与并发新写入的限流。
+func recoverAnthropicFableWindowLimit(ctx context.Context, repo AccountRepository, account *Account, utilization float64) bool {
+	if repo == nil || account == nil || account.ID <= 0 {
+		return false
+	}
+	if utilization < 0 || utilization >= anthropicFableWindowRecoveredUtilization {
+		return false
+	}
+	if !account.isRateLimitActiveForKey(anthropicFableRateLimitKey) {
+		return false
+	}
+	if account.modelRateLimitReason(anthropicFableRateLimitKey) != anthropicFableWindowReason {
+		return false
+	}
+	if err := repo.ClearModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey); err != nil {
+		slog.Warn("anthropic_fable_window_recovery_clear_failed",
+			"account_id", account.ID,
+			"utilization", utilization,
+			"error", err)
+		return false
+	}
+	clearAccountModelRateLimitSnapshot(account, anthropicFableRateLimitKey)
+	slog.Info("anthropic_fable_window_recovered",
+		"account_id", account.ID,
+		"scope", anthropicFableRateLimitKey,
+		"utilization", utilization)
+	return true
+}
 
 // persistAnthropicFableCreditsRequired handles Anthropic's credits_required
 // response for Fable. Although the upstream status is 429, this response only
@@ -2173,28 +2223,19 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		slog.Info("account_session_window_initialized", "account_id", account.ID, "window_start", start, "window_end", end, "status", status)
 	}
 
-	// 5h 换窗清理自己的旧用量；周额度按各自的重置时间判断：未到期的保留，
-	// 已到期的随时清除（包括 5h 窗口中途），没有可用重置时间的只在换窗时清除。
-	rollover := windowEnd != nil && needInitWindow
-	updates := map[string]any{}
-	if rollover {
-		updates["session_window_utilization"] = nil
-		updates["passive_usage_sampled_at"] = nil
-	}
+	// 5h 换窗按 rolloverPassiveUsageClears 清理；窗口中途只清除重置时间已过的周读数。
 	now := time.Now()
-	for _, window := range [...]struct{ utilizationKey, resetKey string }{
-		{"passive_usage_7d_utilization", "passive_usage_7d_reset"},
-		{"passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset"},
-	} {
-		resetAt := parseSchedulingResetAt(account.Extra[window.resetKey])
-		if resetAt != nil && resetAt.After(now) {
-			continue
+	var updates map[string]any
+	if windowEnd != nil && needInitWindow {
+		updates = rolloverPassiveUsageClears(account.Extra, now)
+	} else {
+		updates = map[string]any{}
+		for _, keys := range passiveWeeklyUsageWindows {
+			if resetAt := parseSchedulingResetAt(account.Extra[keys[1]]); resetAt != nil && !resetAt.After(now) {
+				updates[keys[0]] = nil
+				updates[keys[1]] = nil
+			}
 		}
-		if resetAt == nil && !rollover {
-			continue
-		}
-		updates[window.utilizationKey] = nil
-		updates[window.resetKey] = nil
 	}
 	if len(updates) > 0 {
 		_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
@@ -2221,9 +2262,40 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 	}
 }
 
+// passiveWeeklyUsageWindows lists the sampled weekly windows as utilization/reset Extra keys.
+var passiveWeeklyUsageWindows = [...][2]string{
+	{"passive_usage_7d_utilization", "passive_usage_7d_reset"},
+	{"passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset"},
+}
+
+// rolloverPassiveUsageClears returns the Extra updates for a 5h window rollover.
+// The 5h utilization always belongs to the previous window. A weekly reading
+// is kept while its own reset is still ahead: only Fable responses carry 7d_oi,
+// so a Fable-exhausted account that no longer receives Fable traffic would
+// otherwise lose its 7d F reading at every rollover until the weekly reset.
+// Readings with no reset, or a reset that has passed, are stale and cleared.
+func rolloverPassiveUsageClears(extra map[string]any, now time.Time) map[string]any {
+	updates := map[string]any{"session_window_utilization": nil}
+	kept := false
+	for _, keys := range passiveWeeklyUsageWindows {
+		if reset := parseExtraFloat64(extra[keys[1]]); reset > 0 && time.Unix(int64(reset), 0).After(now) {
+			kept = true
+			continue
+		}
+		updates[keys[0]] = nil
+		updates[keys[1]] = nil
+	}
+	// The sample time still describes any weekly reading that was kept.
+	if !kept {
+		updates["passive_usage_sampled_at"] = nil
+	}
+	return updates
+}
+
 // samplePassiveUsageFromHeaders 从 Anthropic 响应头收集 5h/7d/7d_oi 的
 // utilization 与 reset 被动采样数据，合并为一次 Extra 写入。无数据时不写。
 func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, account *Account, headers http.Header) {
+	s.recoverFableWindowFromHeaders(ctx, account, headers)
 	extraUpdates := passiveUsageUpdatesFromHeaders(headers)
 	if len(extraUpdates) > 0 {
 		s.writePassiveUsage(ctx, account, extraUpdates)
@@ -2233,6 +2305,7 @@ func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, ac
 // persistPassiveUsageFromSuccessHeaders 是成功响应路径的被动采样写入：
 // 与已持久化值（account.Extra，来自调度快照/DB）一致则跳过；否则按账号节流；force 时不节流。
 func (s *RateLimitService) persistPassiveUsageFromSuccessHeaders(ctx context.Context, account *Account, headers http.Header, force bool) {
+	s.recoverFableWindowFromHeaders(ctx, account, headers)
 	extraUpdates := passiveUsageUpdatesFromHeaders(headers)
 	if len(extraUpdates) == 0 {
 		return
@@ -2246,6 +2319,21 @@ func (s *RateLimitService) persistPassiveUsageFromSuccessHeaders(ctx context.Con
 		}
 	}
 	s.writePassiveUsage(ctx, account, extraUpdates)
+}
+
+// recoverFableWindowFromHeaders 在上游明确回报 7d_oi 用量回落到耗尽线以下（额度重置或窗口滚动）时，
+// 撤销此前窗口耗尽写入的模型级限流，避免重置卡生效后仍被本地拦到原 rate_limit_reset_at 才解封。
+// 窗口仍处于 rejected/exceeded 时不撤销。不受被动采样的去重与节流影响。
+func (s *RateLimitService) recoverFableWindowFromHeaders(ctx context.Context, account *Account, headers http.Header) {
+	utilStr := headers.Get("anthropic-ratelimit-unified-7d_oi-utilization")
+	if utilStr == "" {
+		return
+	}
+	util, err := strconv.ParseFloat(utilStr, 64)
+	if err != nil || isAnthropicWindowRejected(headers, "7d_oi") || isAnthropicWindowExceeded(headers, "7d_oi") {
+		return
+	}
+	recoverAnthropicFableWindowLimit(ctx, s.accountRepo, account, util)
 }
 
 func (s *RateLimitService) writePassiveUsage(ctx context.Context, account *Account, extraUpdates map[string]any) {
