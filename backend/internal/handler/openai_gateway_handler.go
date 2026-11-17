@@ -1752,7 +1752,7 @@ var (
 func mayContainCodexBootstrapCandidate(body []byte) bool {
 	return bytes.Contains(body, codexAppNamespaceMarker) ||
 		bytes.Contains(body, codexTUINamespaceMarker) ||
-		service.JSONMayContainEscapedLetter(body)
+		service.JSONMayEscapePlainASCII(body)
 }
 
 func isResponsesCallOutputType(typ string) bool {

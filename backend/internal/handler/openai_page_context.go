@@ -152,7 +152,7 @@ var (
 // mayContainCodexUntrustedContext is a byte precheck before the uniqueness scan and
 // full decode. Without the literal markers, only escaped letters could spell them.
 func mayContainCodexUntrustedContext(body []byte) bool {
-	if service.JSONMayContainEscapedLetter(body) {
+	if service.JSONMayEscapePlainASCII(body) {
 		return true
 	}
 	if !bytes.Contains(body, codexFunctionCallOutputMarker) {

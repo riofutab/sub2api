@@ -120,7 +120,8 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 		return found
 	}
 
-	if hasNamespaceTool(gjson.GetBytes(body, "tools")) {
+	root := parseRawJSONView(body)
+	if hasNamespaceTool(root.Get("tools")) {
 		return true
 	}
 
@@ -128,7 +129,7 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 	// tools and into an input.additional_tools carrier. API-key requests are
 	// intentionally not rewritten by normalizeOpenAIResponsesLiteTools, so the
 	// declaration can arrive here only in this form.
-	input := gjson.GetBytes(body, "input")
+	input := root.Get("input")
 	if !input.IsArray() {
 		return false
 	}
@@ -212,7 +213,9 @@ func stripOpenAIResponsesInputNamespacesWhere(body []byte, shouldStrip func(item
 	if !bytes.Contains(body, []byte(`"namespace"`)) {
 		return body, nil
 	}
-	input := gjson.GetBytes(body, "input")
+	// Zero-copy view: input.Raw aliases body and is only read below; the
+	// rebuilt array is written into a fresh buffer.
+	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return body, nil
 	}

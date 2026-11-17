@@ -52,24 +52,6 @@ func TestNormalizeCompactionTriggerInputOrder_EscapedTriggerStillNormalized(t *t
 	require.Equal(t, "compaction_trigger", gjson.GetBytes(got, "input.1.type").String())
 }
 
-func TestJSONMayContainEscapedLetter(t *testing.T) {
-	esc := jsonUnicodeEscapeForTest
-	cases := map[string]bool{
-		`{"a":"plain"}`: false,
-		`{"a":"` + esc("003c") + `div` + esc("003e") + ` ` + esc("0026") + `"}`: false,
-		`{"a":"` + esc("4e2d") + esc("6587") + `"}`:                             false,
-		`{"a":"` + esc("0041") + `"}`:                                           true,
-		`{"a":"` + esc("005f") + `"}`:                                           true,
-		`{"a":"` + esc("005F") + `"}`:                                           true,
-		`{"a":"` + esc("0074") + `"}`:                                           true,
-		`{"a":"` + esc("003c") + esc("0063") + `"}`:                             true,
-		`{"a":"` + jsonUnicodeEscapeForTest("00"):                               false,
-	}
-	for body, want := range cases {
-		require.Equal(t, want, JSONMayContainEscapedLetter([]byte(body)), body)
-	}
-}
-
 func TestHasCompactionTriggerInInput_EscapedTypeStillDetected(t *testing.T) {
 	esc := jsonUnicodeEscapeForTest
 	require.True(t, HasCompactionTriggerInInput([]byte(`{"input":[{"type":"compaction`+esc("005F")+`trigger"}]}`)))
