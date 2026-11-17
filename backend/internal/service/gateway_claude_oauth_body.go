@@ -1198,7 +1198,8 @@ func enforceCacheControlBlockLimit(body []byte) []byte {
 // Requests with a valid order are returned unchanged.
 func normalizeCacheControlTTLOrder(body []byte) []byte {
 	// 每个 Anthropic 请求都会经过这里；不含 1h 的 body 无需再扫一遍断点。
-	if !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) {
+	// 转义写法（如 "1h"）字面量查不到，可能有转义时照常扫描。
+	if !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) && !JSONMayEscapePlainASCII(body) {
 		return body
 	}
 	_, messagePaths, toolPaths, systemPaths := collectCacheControlPaths(body)
