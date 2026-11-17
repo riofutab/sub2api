@@ -357,7 +357,6 @@ func (s *AntigravityGatewayService) buildAntigravityCompatGeminiBody(
 		if err != nil {
 			return nil, err
 		}
-		body = applyAntigravityCompatGeminiThinkingConfig(body, claudeBody, mappedModel)
 		body, err = enableMixedGeminiToolInvocations(body)
 		if err != nil {
 			return nil, err
