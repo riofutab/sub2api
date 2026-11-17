@@ -229,7 +229,7 @@ func (s *antigravityCompatStreamSession) finish() (*antigravityStreamResult, err
 	if !s.hasMeaningfulData() && !s.writer.Disconnected() {
 		if s.preContentKeepaliveSent {
 			s.adapter.WriteError(s.writer, "empty_stream")
-			return s.result(false), errors.New("empty Antigravity compatibility stream after keepalive")
+			return s.result(false), newAntigravityCompatCommittedNoContentError("empty Antigravity compatibility stream after keepalive")
 		}
 		return nil, antigravityCompatEmptyStreamError()
 	}
@@ -439,7 +439,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithTiming(
 	preContentTimeout := func() (*antigravityStreamResult, error) {
 		if session.preContentKeepaliveSent {
 			writeAntigravityCompatStreamError(c, adapter, writer, "stream_timeout")
-			return session.collectResult(false), fmt.Errorf("pre-content stream timeout")
+			return session.collectResult(false), newAntigravityCompatCommittedNoContentError("pre-content stream timeout")
 		}
 		return nil, antigravityCompatEmptyStreamError()
 	}
@@ -500,7 +500,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStreamWithTiming(
 func handleAntigravityCompatEmptyStream(c *gin.Context, session *antigravityCompatStreamSession) (*antigravityStreamResult, error) {
 	if session.preContentKeepaliveSent {
 		writeAntigravityCompatStreamError(c, session.adapter, session.writer, "empty_stream")
-		return session.collectResult(false), errors.New("empty Antigravity compatibility stream after keepalive")
+		return session.collectResult(false), newAntigravityCompatCommittedNoContentError("empty Antigravity compatibility stream after keepalive")
 	}
 	return nil, antigravityCompatEmptyStreamError()
 }
