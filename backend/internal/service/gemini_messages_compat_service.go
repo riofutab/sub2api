@@ -2228,6 +2228,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	openToolIndex := -1
 	openToolID := ""
 	openToolName := ""
+	var toolBoundary geminiToolCallBoundary
 	var seenToolJSON geminiTextDelta
 
 	reader := newBoundedSSELineReader(resp.Body, s.cfg)
@@ -2295,6 +2296,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 				if openBlockType != "thinking" {
 					if openBlockIndex >= 0 {
@@ -2346,6 +2348,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 
 				delta := seenText.next(text)
@@ -2391,7 +2394,6 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 
 			if fc, ok := part["functionCall"].(map[string]any); ok && fc != nil {
 				name, _ := fc["name"].(string)
-				args := fc["args"]
 				if strings.TrimSpace(name) == "" {
 					name = "tool"
 				}
@@ -2407,7 +2409,8 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				}
 
 				// If we receive streamed tool args in pieces, keep a single tool block open and emit deltas.
-				if openToolIndex >= 0 && !geminiFunctionCallContinuesOpenTool(openToolName, seenToolJSON.seen.String(), name) {
+				argsJSONText := geminiToolCallArgsJSON(fc["args"])
+				if openToolIndex >= 0 && toolBoundary.startsNewBlock(openToolName, seenToolJSON.seen.String(), argsJSONText, fc) {
 					writeSSE(c.Writer, "content_block_stop", map[string]any{
 						"type":  "content_block_stop",
 						"index": openToolIndex,
@@ -2415,6 +2418,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					openToolIndex = -1
 					openToolName = ""
 					seenToolJSON.reset()
+					toolBoundary = geminiToolCallBoundary{}
 				}
 
 				if openToolIndex < 0 {
@@ -2436,21 +2440,8 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					})
 				}
 
-				argsJSONText := "{}"
-				switch v := args.(type) {
-				case nil:
-					// keep default "{}"
-				case string:
-					if strings.TrimSpace(v) != "" {
-						argsJSONText = v
-					}
-				default:
-					if b, err := json.Marshal(args); err == nil && len(b) > 0 {
-						argsJSONText = string(b)
-					}
-				}
-
 				delta := seenToolJSON.next(argsJSONText)
+				toolBoundary.observe(fc)
 				if delta != "" {
 					writeSSE(c.Writer, "content_block_delta", map[string]any{
 						"type":  "content_block_delta",
@@ -3470,19 +3461,6 @@ func (d *geminiTextDelta) next(incoming string) string {
 
 func (d *geminiTextDelta) reset() {
 	d.seen.Reset()
-}
-
-// geminiFunctionCallContinuesOpenTool 判断流式响应中的 functionCall part 是否应并入
-// 当前已打开的 tool_use 块。Gemini 每个 functionCall part 携带完整参数，只有当已
-// 累积参数尚不是合法 JSON（确实处于分片中）时才视为同一调用的续传；否则同名的下一个
-// functionCall 是新的并行调用（包括两次参数相同的无参调用），必须开新块。
-// 仅按工具名判断会把并行的同名调用合成一个，参数被拼接成 {"a":1}{"a":2}。
-func geminiFunctionCallContinuesOpenTool(openName, seenArgs, name string) bool {
-	if openName != name {
-		return false
-	}
-	seen := strings.TrimSpace(seenArgs)
-	return seen == "" || !json.Valid([]byte(seen))
 }
 
 func mapGeminiFinishReasonToClaudeStopReason(finishReason string) string {

@@ -207,19 +207,3 @@ func TestGeminiMessagesStream_FragmentedArgsStillMerge(t *testing.T) {
 	calls := collectGeminiAnthropicToolUses(t, out)
 	requireDistinctGeminiToolCalls(t, calls, "get_weather", `{"city":"Beijing"}`)
 }
-
-func TestGeminiFunctionCallContinuesOpenTool(t *testing.T) {
-	cases := []struct {
-		openName, seen, name string
-		want                 bool
-	}{
-		{"get_weather", `{"city":"Beijing"}`, "get_weather", false}, // 完整参数后同名 = 新调用
-		{"get_weather", `{}`, "get_weather", false},
-		{"get_weather", `{"city":`, "get_weather", true}, // 分片中 = 续传
-		{"get_weather", ``, "get_weather", true},
-		{"get_weather", `{"city":`, "get_time", false}, // 换名一律新调用
-	}
-	for _, tc := range cases {
-		require.Equalf(t, tc.want, geminiFunctionCallContinuesOpenTool(tc.openName, tc.seen, tc.name), "%+v", tc)
-	}
-}
