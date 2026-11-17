@@ -517,6 +517,13 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		}
 		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, summary)
 	case 500, 502, 503, 504:
+		// Bedrock 内容过滤是请求级的确定性结果，按请求错误返回，客户端不应原样重试。
+		if account.IsBedrock() && isBedrockContentFilterError(resp.StatusCode, body) && upstreamMsg != "" {
+			statusCode = http.StatusBadRequest
+			errType = "invalid_request_error"
+			errMsg = upstreamMsg
+			break
+		}
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
 		errMsg = "Upstream service temporarily unavailable"
