@@ -39,7 +39,8 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 			_ = json.Unmarshal(item[key], &value)
 			return value
 		}
-		if readString("type") != "function_call_output" || readString("namespace") != "agent" {
+		namespace := readString("namespace")
+		if readString("type") != "function_call_output" {
 			continue
 		}
 		if callID, exists := item["call_id"]; exists {
@@ -49,12 +50,20 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 			}
 		}
 		name, output := readString("name"), readString("output")
-		if !validCodexUntrustedContext(name, output) {
+		var text string
+		switch {
+		case namespace == "agent" && validCodexUntrustedContext(name, output):
+			text = "<external_" + name + ">" + output + "</external_" + name + ">"
+			if validCodexPageContext(name, output) {
+				text = "<external_" + name + ">\n" + output + "\n</external_" + name + ">"
+			}
+		case namespace == "guardian" && validCodexGuardianContext(name, output):
+			text = "<external_" + name + ">" + output + "</external_" + name + ">"
+		case namespace == "cloud_threads" && name == "send_message" && validCodexCloudDelegationEnvelope(output):
+			// 与 codex_app/codex_tui 委派 bootstrap 一致，信封原文作为 user 文本。
+			text = output
+		default:
 			continue
-		}
-		text := "<external_" + name + ">" + output + "</external_" + name + ">"
-		if validCodexPageContext(name, output) {
-			text = "<external_" + name + ">\n" + output + "\n</external_" + name + ">"
 		}
 		message := map[string]any{
 			"type": "message",
@@ -86,13 +95,41 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 	return encoded, true
 }
 
+// validCodexUntrustedContext 覆盖 agent 命名空间的独立上下文。#8769 观察到的 browser_info、
+// goal_objective、untrusted_context 之外，openai/codex（e58bf8f5233b）的 session/approved_plan
+// 与 context-fragments 还会产出 proposed_plan、untrusted_content。
 func validCodexUntrustedContext(name, output string) bool {
 	switch name {
-	case "browser_info", "goal_objective", "untrusted_context":
+	case "browser_info", "goal_objective", "untrusted_context", "proposed_plan", "untrusted_content":
 		return strings.TrimSpace(output) != ""
 	default:
 		return validCodexPageContext(name, output)
 	}
+}
+
+// validCodexGuardianContext 覆盖 ext/guardian-v3/sampling 注入的 guardian 输入，输出是 JSON 对象。
+func validCodexGuardianContext(name, output string) bool {
+	switch name {
+	case "guardian_housekeeper_input", "guardian_channel_selection_input", "guardian_original_evidence":
+		return json.Valid([]byte(output)) && hasUniqueJSONMembers([]byte(output))
+	}
+	return false
+}
+
+// validCodexCloudDelegationEnvelope 识别 cloud_threads/send_message 投递的委派信封；
+// 云端投递可能在常规信封里加 Dot 归属（source_orbit_id）。
+func validCodexCloudDelegationEnvelope(output string) bool {
+	const open, close = "<source_orbit_id>", "</source_orbit_id>"
+	if before, rest, found := strings.Cut(output, open); found {
+		orbit, after, ok := strings.Cut(rest, close)
+		if !ok || strings.TrimSpace(orbit) == "" || strings.ContainsAny(orbit, "<>") ||
+			!strings.HasSuffix(strings.TrimSpace(before), "</source_thread_id>") ||
+			!strings.HasPrefix(strings.TrimSpace(after), "<input>") {
+			return false
+		}
+		output = before + after
+	}
+	return validCodexDelegationEnvelope(output)
 }
 
 func validCodexPageContext(name, output string) bool {
@@ -146,6 +183,10 @@ var (
 		[]byte("browser_info"),
 		[]byte("goal_objective"),
 		[]byte("untrusted_context"),
+		[]byte("proposed_plan"),
+		[]byte("untrusted_content"),
+		[]byte("guardian_"),
+		[]byte("cloud_threads"),
 	}
 )
 

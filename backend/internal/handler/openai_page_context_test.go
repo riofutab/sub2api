@@ -249,3 +249,45 @@ func TestNormalizeCodexPageContextRejectsUnrelatedOrMalformedItems(t *testing.T)
 		require.Equal(t, body, string(got))
 	}
 }
+
+// 撤销 #8680 后，它支持的 agent/guardian/cloud_threads 独立上下文仍须归一化，否则 HTTP 请求在本地被拒。
+func TestNormalizeCodexUntrustedContextKeepsFormerStandaloneNames(t *testing.T) {
+	cloudEnvelope := `<codex_delegation><source_thread_id>thread-1</source_thread_id><source_orbit_id>orbit-1</source_orbit_id><input>do the work</input></codex_delegation>`
+	for _, tc := range []struct {
+		name, namespace, tool, output, wantText string
+	}{
+		{"proposed_plan", "agent", "proposed_plan", "1. step", "<external_proposed_plan>1. step</external_proposed_plan>"},
+		{"untrusted_content", "agent", "untrusted_content", "page text", "<external_untrusted_content>page text</external_untrusted_content>"},
+		{"guardian", "guardian", "guardian_original_evidence", `{"evidence":"x"}`, `<external_guardian_original_evidence>{"evidence":"x"}</external_guardian_original_evidence>`},
+		{"cloud_threads", "cloud_threads", "send_message", cloudEnvelope, cloudEnvelope},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			item := map[string]any{"type": "function_call_output", "namespace": tc.namespace, "name": tc.tool, "output": tc.output}
+			body := pageContextRequest(t, item, map[string]any{"role": "user", "content": "continue"})
+			h := &OpenAIGatewayHandler{}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			require.False(t, h.validateFunctionCallOutputRequest(c, body, zap.NewNop()))
+
+			got, changed := normalizeCodexUntrustedContext(body)
+			require.True(t, changed)
+			c, _ = gin.CreateTestContext(httptest.NewRecorder())
+			require.True(t, h.validateFunctionCallOutputRequest(c, got, zap.NewNop()))
+			first := gjson.GetBytes(got, "input.0")
+			require.Equal(t, "user", first.Get("role").String())
+			require.Equal(t, tc.wantText, first.Get("content.0.text").String())
+		})
+	}
+
+	// 名字不在名单内或输出不合规的保持原样。
+	for _, item := range []map[string]any{
+		{"type": "function_call_output", "namespace": "guardian", "name": "guardian_original_evidence", "output": "not json"},
+		{"type": "function_call_output", "namespace": "guardian", "name": "other", "output": `{}`},
+		{"type": "function_call_output", "namespace": "cloud_threads", "name": "send_message", "output": "plain"},
+		{"type": "function_call_output", "namespace": "agent", "name": "proposed_plan", "output": "  "},
+	} {
+		body := pageContextRequest(t, item)
+		got, changed := normalizeCodexUntrustedContext(body)
+		require.False(t, changed, "%v", item)
+		require.Equal(t, body, got)
+	}
+}
