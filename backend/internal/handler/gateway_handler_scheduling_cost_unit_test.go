@@ -54,6 +54,15 @@ func (r *schedulingCountingAccountRepo) ListSchedulableByGroupIDAndPlatforms(_ c
 	return r.filter(groupID, platforms), nil
 }
 
+// ListModelAvailabilityCandidates 是 #8729 之后调度快照回源用的查询。
+func (r *schedulingCountingAccountRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, _ bool) ([]service.Account, error) {
+	r.queries.Add(1)
+	if groupID == nil {
+		return nil, nil
+	}
+	return r.filter(*groupID, platforms), nil
+}
+
 func (r *schedulingCountingAccountRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, groupID int64, platform string) ([]service.Account, error) {
 	r.queries.Add(1)
 	return r.filter(groupID, []string{platform}), nil
