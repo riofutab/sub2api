@@ -2178,28 +2178,19 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		slog.Info("account_session_window_initialized", "account_id", account.ID, "window_start", start, "window_end", end, "status", status)
 	}
 
-	// 5h 换窗清理自己的旧用量；周额度按各自的重置时间判断：未到期的保留，
-	// 已到期的随时清除（包括 5h 窗口中途），没有可用重置时间的只在换窗时清除。
-	rollover := windowEnd != nil && needInitWindow
-	updates := map[string]any{}
-	if rollover {
-		updates["session_window_utilization"] = nil
-		updates["passive_usage_sampled_at"] = nil
-	}
+	// 5h 换窗按 rolloverPassiveUsageClears 清理；窗口中途只清除重置时间已过的周读数。
 	now := time.Now()
-	for _, window := range [...]struct{ utilizationKey, resetKey string }{
-		{"passive_usage_7d_utilization", "passive_usage_7d_reset"},
-		{"passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset"},
-	} {
-		resetAt := parseSchedulingResetAt(account.Extra[window.resetKey])
-		if resetAt != nil && resetAt.After(now) {
-			continue
+	var updates map[string]any
+	if windowEnd != nil && needInitWindow {
+		updates = rolloverPassiveUsageClears(account.Extra, now)
+	} else {
+		updates = map[string]any{}
+		for _, keys := range passiveWeeklyUsageWindows {
+			if resetAt := parseSchedulingResetAt(account.Extra[keys[1]]); resetAt != nil && !resetAt.After(now) {
+				updates[keys[0]] = nil
+				updates[keys[1]] = nil
+			}
 		}
-		if resetAt == nil && !rollover {
-			continue
-		}
-		updates[window.utilizationKey] = nil
-		updates[window.resetKey] = nil
 	}
 	if len(updates) > 0 {
 		_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
@@ -2224,6 +2215,36 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 			slog.Warn("rate_limit_clear_failed", "account_id", account.ID, "error", err)
 		}
 	}
+}
+
+// passiveWeeklyUsageWindows lists the sampled weekly windows as utilization/reset Extra keys.
+var passiveWeeklyUsageWindows = [...][2]string{
+	{"passive_usage_7d_utilization", "passive_usage_7d_reset"},
+	{"passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset"},
+}
+
+// rolloverPassiveUsageClears returns the Extra updates for a 5h window rollover.
+// The 5h utilization always belongs to the previous window. A weekly reading
+// is kept while its own reset is still ahead: only Fable responses carry 7d_oi,
+// so a Fable-exhausted account that no longer receives Fable traffic would
+// otherwise lose its 7d F reading at every rollover until the weekly reset.
+// Readings with no reset, or a reset that has passed, are stale and cleared.
+func rolloverPassiveUsageClears(extra map[string]any, now time.Time) map[string]any {
+	updates := map[string]any{"session_window_utilization": nil}
+	kept := false
+	for _, keys := range passiveWeeklyUsageWindows {
+		if reset := parseExtraFloat64(extra[keys[1]]); reset > 0 && time.Unix(int64(reset), 0).After(now) {
+			kept = true
+			continue
+		}
+		updates[keys[0]] = nil
+		updates[keys[1]] = nil
+	}
+	// The sample time still describes any weekly reading that was kept.
+	if !kept {
+		updates["passive_usage_sampled_at"] = nil
+	}
+	return updates
 }
 
 // samplePassiveUsageFromHeaders 从 Anthropic 响应头收集 5h/7d/7d_oi 的
