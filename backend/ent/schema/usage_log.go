@@ -93,6 +93,26 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("cache_creation_12h_tokens").
 			Default(0),
 
+		// Advisor 子推理用量（usage.iterations[] 的 advisor_message），不含在上面的 token 计数里
+		field.String("advisor_model").
+			MaxLen(100).
+			Optional().
+			Nillable(),
+		field.Int("advisor_calls").
+			Default(0),
+		field.Int("advisor_input_tokens").
+			Default(0),
+		field.Int("advisor_output_tokens").
+			Default(0),
+		field.Int("advisor_cache_creation_tokens").
+			Default(0),
+		field.Int("advisor_cache_read_tokens").
+			Default(0),
+		field.Float("advisor_cost").
+			Default(0).
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}).
+			Comment("已计入 total_cost 的 advisor 费用（倍率前）"),
+
 		// 成本字段
 		field.Float("input_cost").
 			Default(0).

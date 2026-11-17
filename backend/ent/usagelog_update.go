@@ -477,6 +477,152 @@ func (_u *UsageLogUpdate) AddCacheCreation12hTokens(v int) *UsageLogUpdate {
 	return _u
 }
 
+// SetAdvisorModel sets the "advisor_model" field.
+func (_u *UsageLogUpdate) SetAdvisorModel(v string) *UsageLogUpdate {
+	_u.mutation.SetAdvisorModel(v)
+	return _u
+}
+
+// SetNillableAdvisorModel sets the "advisor_model" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorModel(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorModel(*v)
+	}
+	return _u
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (_u *UsageLogUpdate) ClearAdvisorModel() *UsageLogUpdate {
+	_u.mutation.ClearAdvisorModel()
+	return _u
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (_u *UsageLogUpdate) SetAdvisorCalls(v int) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorCalls()
+	_u.mutation.SetAdvisorCalls(v)
+	return _u
+}
+
+// SetNillableAdvisorCalls sets the "advisor_calls" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorCalls(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorCalls(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCalls adds value to the "advisor_calls" field.
+func (_u *UsageLogUpdate) AddAdvisorCalls(v int) *UsageLogUpdate {
+	_u.mutation.AddAdvisorCalls(v)
+	return _u
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (_u *UsageLogUpdate) SetAdvisorInputTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorInputTokens()
+	_u.mutation.SetAdvisorInputTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorInputTokens sets the "advisor_input_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorInputTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorInputTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorInputTokens adds value to the "advisor_input_tokens" field.
+func (_u *UsageLogUpdate) AddAdvisorInputTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAdvisorInputTokens(v)
+	return _u
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (_u *UsageLogUpdate) SetAdvisorOutputTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorOutputTokens()
+	_u.mutation.SetAdvisorOutputTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorOutputTokens sets the "advisor_output_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorOutputTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorOutputTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorOutputTokens adds value to the "advisor_output_tokens" field.
+func (_u *UsageLogUpdate) AddAdvisorOutputTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAdvisorOutputTokens(v)
+	return _u
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (_u *UsageLogUpdate) SetAdvisorCacheCreationTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorCacheCreationTokens()
+	_u.mutation.SetAdvisorCacheCreationTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorCacheCreationTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorCacheCreationTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCacheCreationTokens adds value to the "advisor_cache_creation_tokens" field.
+func (_u *UsageLogUpdate) AddAdvisorCacheCreationTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAdvisorCacheCreationTokens(v)
+	return _u
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (_u *UsageLogUpdate) SetAdvisorCacheReadTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorCacheReadTokens()
+	_u.mutation.SetAdvisorCacheReadTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorCacheReadTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorCacheReadTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCacheReadTokens adds value to the "advisor_cache_read_tokens" field.
+func (_u *UsageLogUpdate) AddAdvisorCacheReadTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddAdvisorCacheReadTokens(v)
+	return _u
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (_u *UsageLogUpdate) SetAdvisorCost(v float64) *UsageLogUpdate {
+	_u.mutation.ResetAdvisorCost()
+	_u.mutation.SetAdvisorCost(v)
+	return _u
+}
+
+// SetNillableAdvisorCost sets the "advisor_cost" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAdvisorCost(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAdvisorCost(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCost adds value to the "advisor_cost" field.
+func (_u *UsageLogUpdate) AddAdvisorCost(v float64) *UsageLogUpdate {
+	_u.mutation.AddAdvisorCost(v)
+	return _u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_u *UsageLogUpdate) SetInputCost(v float64) *UsageLogUpdate {
 	_u.mutation.ResetInputCost()
@@ -1118,6 +1264,11 @@ func (_u *UsageLogUpdate) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AdvisorModel(); ok {
+		if err := usagelog.AdvisorModelValidator(v); err != nil {
+			return &ValidationError{Name: "advisor_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.advisor_model": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -1281,6 +1432,48 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedCacheCreation12hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorModel(); ok {
+		_spec.SetField(usagelog.FieldAdvisorModel, field.TypeString, value)
+	}
+	if _u.mutation.AdvisorModelCleared() {
+		_spec.ClearField(usagelog.FieldAdvisorModel, field.TypeString)
+	}
+	if value, ok := _u.mutation.AdvisorCalls(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCalls, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCalls(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCalls, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorInputTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorOutputTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCacheCreationTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheCreationTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCacheCreationTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCacheCreationTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCacheReadTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheReadTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCacheReadTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCacheReadTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCost(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCost(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCost, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
@@ -2045,6 +2238,152 @@ func (_u *UsageLogUpdateOne) AddCacheCreation12hTokens(v int) *UsageLogUpdateOne
 	return _u
 }
 
+// SetAdvisorModel sets the "advisor_model" field.
+func (_u *UsageLogUpdateOne) SetAdvisorModel(v string) *UsageLogUpdateOne {
+	_u.mutation.SetAdvisorModel(v)
+	return _u
+}
+
+// SetNillableAdvisorModel sets the "advisor_model" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorModel(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorModel(*v)
+	}
+	return _u
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (_u *UsageLogUpdateOne) ClearAdvisorModel() *UsageLogUpdateOne {
+	_u.mutation.ClearAdvisorModel()
+	return _u
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (_u *UsageLogUpdateOne) SetAdvisorCalls(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorCalls()
+	_u.mutation.SetAdvisorCalls(v)
+	return _u
+}
+
+// SetNillableAdvisorCalls sets the "advisor_calls" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorCalls(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorCalls(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCalls adds value to the "advisor_calls" field.
+func (_u *UsageLogUpdateOne) AddAdvisorCalls(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorCalls(v)
+	return _u
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (_u *UsageLogUpdateOne) SetAdvisorInputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorInputTokens()
+	_u.mutation.SetAdvisorInputTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorInputTokens sets the "advisor_input_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorInputTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorInputTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorInputTokens adds value to the "advisor_input_tokens" field.
+func (_u *UsageLogUpdateOne) AddAdvisorInputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorInputTokens(v)
+	return _u
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (_u *UsageLogUpdateOne) SetAdvisorOutputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorOutputTokens()
+	_u.mutation.SetAdvisorOutputTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorOutputTokens sets the "advisor_output_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorOutputTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorOutputTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorOutputTokens adds value to the "advisor_output_tokens" field.
+func (_u *UsageLogUpdateOne) AddAdvisorOutputTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorOutputTokens(v)
+	return _u
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (_u *UsageLogUpdateOne) SetAdvisorCacheCreationTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorCacheCreationTokens()
+	_u.mutation.SetAdvisorCacheCreationTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorCacheCreationTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorCacheCreationTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCacheCreationTokens adds value to the "advisor_cache_creation_tokens" field.
+func (_u *UsageLogUpdateOne) AddAdvisorCacheCreationTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorCacheCreationTokens(v)
+	return _u
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (_u *UsageLogUpdateOne) SetAdvisorCacheReadTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorCacheReadTokens()
+	_u.mutation.SetAdvisorCacheReadTokens(v)
+	return _u
+}
+
+// SetNillableAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorCacheReadTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorCacheReadTokens(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCacheReadTokens adds value to the "advisor_cache_read_tokens" field.
+func (_u *UsageLogUpdateOne) AddAdvisorCacheReadTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorCacheReadTokens(v)
+	return _u
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (_u *UsageLogUpdateOne) SetAdvisorCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetAdvisorCost()
+	_u.mutation.SetAdvisorCost(v)
+	return _u
+}
+
+// SetNillableAdvisorCost sets the "advisor_cost" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAdvisorCost(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAdvisorCost(*v)
+	}
+	return _u
+}
+
+// AddAdvisorCost adds value to the "advisor_cost" field.
+func (_u *UsageLogUpdateOne) AddAdvisorCost(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddAdvisorCost(v)
+	return _u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_u *UsageLogUpdateOne) SetInputCost(v float64) *UsageLogUpdateOne {
 	_u.mutation.ResetInputCost()
@@ -2699,6 +3038,11 @@ func (_u *UsageLogUpdateOne) check() error {
 			return &ValidationError{Name: "billing_mode", err: fmt.Errorf(`ent: validator failed for field "UsageLog.billing_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.AdvisorModel(); ok {
+		if err := usagelog.AdvisorModelValidator(v); err != nil {
+			return &ValidationError{Name: "advisor_model", err: fmt.Errorf(`ent: validator failed for field "UsageLog.advisor_model": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.UserAgent(); ok {
 		if err := usagelog.UserAgentValidator(v); err != nil {
 			return &ValidationError{Name: "user_agent", err: fmt.Errorf(`ent: validator failed for field "UsageLog.user_agent": %w`, err)}
@@ -2879,6 +3223,48 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedCacheCreation12hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorModel(); ok {
+		_spec.SetField(usagelog.FieldAdvisorModel, field.TypeString, value)
+	}
+	if _u.mutation.AdvisorModelCleared() {
+		_spec.ClearField(usagelog.FieldAdvisorModel, field.TypeString)
+	}
+	if value, ok := _u.mutation.AdvisorCalls(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCalls, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCalls(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCalls, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorInputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorInputTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorInputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorOutputTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorOutputTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCacheCreationTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheCreationTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCacheCreationTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCacheCreationTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCacheReadTokens(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCacheReadTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCacheReadTokens(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCacheReadTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AdvisorCost(); ok {
+		_spec.SetField(usagelog.FieldAdvisorCost, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedAdvisorCost(); ok {
+		_spec.AddField(usagelog.FieldAdvisorCost, field.TypeFloat64, value)
 	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)

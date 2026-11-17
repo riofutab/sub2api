@@ -165,6 +165,34 @@ describe('admin UsageTable tooltip', () => {
     }
   })
 
+  it('shows advisor usage beside the executor tokens only for advisor rows', () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', model: 'claude-opus-5-5', input_tokens: 4, output_tokens: 945 }
+    const advisorRow = {
+      ...row,
+      request_id: 'advisor',
+      advisor_model: 'claude-fable-5-2',
+      advisor_calls: 1,
+      advisor_input_tokens: 311423,
+      advisor_output_tokens: 10019,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row, advisorRow],
+        loading: false,
+        columns: [{ key: 'tokens', label: 'Tokens' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    const plain = wrapper.find('[data-request-id="req-admin-image"]').text()
+    const advisor = wrapper.find('[data-request-id="advisor"]').text()
+    expect(plain).not.toContain('Advisor')
+    expect(advisor).toContain('Advisor')
+    expect(advisor).toContain('claude-fable-5-2 ×1')
+    expect(advisor).toContain('↓311,423')
+    expect(advisor).toContain('↑10,019')
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {

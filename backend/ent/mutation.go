@@ -44722,90 +44722,103 @@ func (m *UsageCleanupTaskMutation) ResetEdge(name string) error {
 // UsageLogMutation represents an operation that mutates the UsageLog nodes in the graph.
 type UsageLogMutation struct {
 	config
-	op                           Op
-	typ                          string
-	id                           *int64
-	request_id                   *string
-	model                        *string
-	requested_model              *string
-	upstream_model               *string
-	upstream_response_model      *string
-	upstream_model_mismatch      *bool
-	channel_id                   *int64
-	addchannel_id                *int64
-	model_mapping_chain          *string
-	billing_tier                 *string
-	billing_mode                 *string
-	input_tokens                 *int
-	addinput_tokens              *int
-	output_tokens                *int
-	addoutput_tokens             *int
-	cache_creation_tokens        *int
-	addcache_creation_tokens     *int
-	cache_read_tokens            *int
-	addcache_read_tokens         *int
-	cache_creation_5m_tokens     *int
-	addcache_creation_5m_tokens  *int
-	cache_creation_1h_tokens     *int
-	addcache_creation_1h_tokens  *int
-	cache_creation_30m_tokens    *int
-	addcache_creation_30m_tokens *int
-	cache_creation_12h_tokens    *int
-	addcache_creation_12h_tokens *int
-	input_cost                   *float64
-	addinput_cost                *float64
-	output_cost                  *float64
-	addoutput_cost               *float64
-	cache_creation_cost          *float64
-	addcache_creation_cost       *float64
-	cache_read_cost              *float64
-	addcache_read_cost           *float64
-	total_cost                   *float64
-	addtotal_cost                *float64
-	actual_cost                  *float64
-	addactual_cost               *float64
-	rate_multiplier              *float64
-	addrate_multiplier           *float64
-	long_context_billing_applied *bool
-	account_rate_multiplier      *float64
-	addaccount_rate_multiplier   *float64
-	billing_type                 *int8
-	addbilling_type              *int8
-	stream                       *bool
-	duration_ms                  *int
-	addduration_ms               *int
-	first_token_ms               *int
-	addfirst_token_ms            *int
-	user_agent                   *string
-	ip_address                   *string
-	image_count                  *int
-	addimage_count               *int
-	image_size                   *string
-	image_input_size             *string
-	image_output_size            *string
-	image_size_source            *string
-	image_size_breakdown         *map[string]int
-	video_count                  *int
-	addvideo_count               *int
-	video_resolution             *string
-	video_duration_seconds       *int
-	addvideo_duration_seconds    *int
-	cache_ttl_overridden         *bool
-	created_at                   *time.Time
-	clearedFields                map[string]struct{}
-	user                         *int64
-	cleareduser                  bool
-	api_key                      *int64
-	clearedapi_key               bool
-	account                      *int64
-	clearedaccount               bool
-	group                        *int64
-	clearedgroup                 bool
-	subscription                 *int64
-	clearedsubscription          bool
-	done                         bool
-	oldValue                     func(context.Context) (*UsageLog, error)
-	predicates                   []predicate.UsageLog
+	op                               Op
+	typ                              string
+	id                               *int64
+	request_id                       *string
+	model                            *string
+	requested_model                  *string
+	upstream_model                   *string
+	upstream_response_model          *string
+	upstream_model_mismatch          *bool
+	channel_id                       *int64
+	addchannel_id                    *int64
+	model_mapping_chain              *string
+	billing_tier                     *string
+	billing_mode                     *string
+	input_tokens                     *int
+	addinput_tokens                  *int
+	output_tokens                    *int
+	addoutput_tokens                 *int
+	cache_creation_tokens            *int
+	addcache_creation_tokens         *int
+	cache_read_tokens                *int
+	addcache_read_tokens             *int
+	cache_creation_5m_tokens         *int
+	addcache_creation_5m_tokens      *int
+	cache_creation_1h_tokens         *int
+	addcache_creation_1h_tokens      *int
+	cache_creation_30m_tokens        *int
+	addcache_creation_30m_tokens     *int
+	cache_creation_12h_tokens        *int
+	addcache_creation_12h_tokens     *int
+	advisor_model                    *string
+	advisor_calls                    *int
+	addadvisor_calls                 *int
+	advisor_input_tokens             *int
+	addadvisor_input_tokens          *int
+	advisor_output_tokens            *int
+	addadvisor_output_tokens         *int
+	advisor_cache_creation_tokens    *int
+	addadvisor_cache_creation_tokens *int
+	advisor_cache_read_tokens        *int
+	addadvisor_cache_read_tokens     *int
+	advisor_cost                     *float64
+	addadvisor_cost                  *float64
+	input_cost                       *float64
+	addinput_cost                    *float64
+	output_cost                      *float64
+	addoutput_cost                   *float64
+	cache_creation_cost              *float64
+	addcache_creation_cost           *float64
+	cache_read_cost                  *float64
+	addcache_read_cost               *float64
+	total_cost                       *float64
+	addtotal_cost                    *float64
+	actual_cost                      *float64
+	addactual_cost                   *float64
+	rate_multiplier                  *float64
+	addrate_multiplier               *float64
+	long_context_billing_applied     *bool
+	account_rate_multiplier          *float64
+	addaccount_rate_multiplier       *float64
+	billing_type                     *int8
+	addbilling_type                  *int8
+	stream                           *bool
+	duration_ms                      *int
+	addduration_ms                   *int
+	first_token_ms                   *int
+	addfirst_token_ms                *int
+	user_agent                       *string
+	ip_address                       *string
+	image_count                      *int
+	addimage_count                   *int
+	image_size                       *string
+	image_input_size                 *string
+	image_output_size                *string
+	image_size_source                *string
+	image_size_breakdown             *map[string]int
+	video_count                      *int
+	addvideo_count                   *int
+	video_resolution                 *string
+	video_duration_seconds           *int
+	addvideo_duration_seconds        *int
+	cache_ttl_overridden             *bool
+	created_at                       *time.Time
+	clearedFields                    map[string]struct{}
+	user                             *int64
+	cleareduser                      bool
+	api_key                          *int64
+	clearedapi_key                   bool
+	account                          *int64
+	clearedaccount                   bool
+	group                            *int64
+	clearedgroup                     bool
+	subscription                     *int64
+	clearedsubscription              bool
+	done                             bool
+	oldValue                         func(context.Context) (*UsageLog, error)
+	predicates                       []predicate.UsageLog
 }
 
 var _ ent.Mutation = (*UsageLogMutation)(nil)
@@ -46043,6 +46056,391 @@ func (m *UsageLogMutation) AddedCacheCreation12hTokens() (r int, exists bool) {
 func (m *UsageLogMutation) ResetCacheCreation12hTokens() {
 	m.cache_creation_12h_tokens = nil
 	m.addcache_creation_12h_tokens = nil
+}
+
+// SetAdvisorModel sets the "advisor_model" field.
+func (m *UsageLogMutation) SetAdvisorModel(s string) {
+	m.advisor_model = &s
+}
+
+// AdvisorModel returns the value of the "advisor_model" field in the mutation.
+func (m *UsageLogMutation) AdvisorModel() (r string, exists bool) {
+	v := m.advisor_model
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorModel returns the old "advisor_model" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorModel(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorModel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorModel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorModel: %w", err)
+	}
+	return oldValue.AdvisorModel, nil
+}
+
+// ClearAdvisorModel clears the value of the "advisor_model" field.
+func (m *UsageLogMutation) ClearAdvisorModel() {
+	m.advisor_model = nil
+	m.clearedFields[usagelog.FieldAdvisorModel] = struct{}{}
+}
+
+// AdvisorModelCleared returns if the "advisor_model" field was cleared in this mutation.
+func (m *UsageLogMutation) AdvisorModelCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldAdvisorModel]
+	return ok
+}
+
+// ResetAdvisorModel resets all changes to the "advisor_model" field.
+func (m *UsageLogMutation) ResetAdvisorModel() {
+	m.advisor_model = nil
+	delete(m.clearedFields, usagelog.FieldAdvisorModel)
+}
+
+// SetAdvisorCalls sets the "advisor_calls" field.
+func (m *UsageLogMutation) SetAdvisorCalls(i int) {
+	m.advisor_calls = &i
+	m.addadvisor_calls = nil
+}
+
+// AdvisorCalls returns the value of the "advisor_calls" field in the mutation.
+func (m *UsageLogMutation) AdvisorCalls() (r int, exists bool) {
+	v := m.advisor_calls
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorCalls returns the old "advisor_calls" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorCalls(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorCalls is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorCalls requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorCalls: %w", err)
+	}
+	return oldValue.AdvisorCalls, nil
+}
+
+// AddAdvisorCalls adds i to the "advisor_calls" field.
+func (m *UsageLogMutation) AddAdvisorCalls(i int) {
+	if m.addadvisor_calls != nil {
+		*m.addadvisor_calls += i
+	} else {
+		m.addadvisor_calls = &i
+	}
+}
+
+// AddedAdvisorCalls returns the value that was added to the "advisor_calls" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorCalls() (r int, exists bool) {
+	v := m.addadvisor_calls
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorCalls resets all changes to the "advisor_calls" field.
+func (m *UsageLogMutation) ResetAdvisorCalls() {
+	m.advisor_calls = nil
+	m.addadvisor_calls = nil
+}
+
+// SetAdvisorInputTokens sets the "advisor_input_tokens" field.
+func (m *UsageLogMutation) SetAdvisorInputTokens(i int) {
+	m.advisor_input_tokens = &i
+	m.addadvisor_input_tokens = nil
+}
+
+// AdvisorInputTokens returns the value of the "advisor_input_tokens" field in the mutation.
+func (m *UsageLogMutation) AdvisorInputTokens() (r int, exists bool) {
+	v := m.advisor_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorInputTokens returns the old "advisor_input_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorInputTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorInputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorInputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorInputTokens: %w", err)
+	}
+	return oldValue.AdvisorInputTokens, nil
+}
+
+// AddAdvisorInputTokens adds i to the "advisor_input_tokens" field.
+func (m *UsageLogMutation) AddAdvisorInputTokens(i int) {
+	if m.addadvisor_input_tokens != nil {
+		*m.addadvisor_input_tokens += i
+	} else {
+		m.addadvisor_input_tokens = &i
+	}
+}
+
+// AddedAdvisorInputTokens returns the value that was added to the "advisor_input_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorInputTokens() (r int, exists bool) {
+	v := m.addadvisor_input_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorInputTokens resets all changes to the "advisor_input_tokens" field.
+func (m *UsageLogMutation) ResetAdvisorInputTokens() {
+	m.advisor_input_tokens = nil
+	m.addadvisor_input_tokens = nil
+}
+
+// SetAdvisorOutputTokens sets the "advisor_output_tokens" field.
+func (m *UsageLogMutation) SetAdvisorOutputTokens(i int) {
+	m.advisor_output_tokens = &i
+	m.addadvisor_output_tokens = nil
+}
+
+// AdvisorOutputTokens returns the value of the "advisor_output_tokens" field in the mutation.
+func (m *UsageLogMutation) AdvisorOutputTokens() (r int, exists bool) {
+	v := m.advisor_output_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorOutputTokens returns the old "advisor_output_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorOutputTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorOutputTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorOutputTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorOutputTokens: %w", err)
+	}
+	return oldValue.AdvisorOutputTokens, nil
+}
+
+// AddAdvisorOutputTokens adds i to the "advisor_output_tokens" field.
+func (m *UsageLogMutation) AddAdvisorOutputTokens(i int) {
+	if m.addadvisor_output_tokens != nil {
+		*m.addadvisor_output_tokens += i
+	} else {
+		m.addadvisor_output_tokens = &i
+	}
+}
+
+// AddedAdvisorOutputTokens returns the value that was added to the "advisor_output_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorOutputTokens() (r int, exists bool) {
+	v := m.addadvisor_output_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorOutputTokens resets all changes to the "advisor_output_tokens" field.
+func (m *UsageLogMutation) ResetAdvisorOutputTokens() {
+	m.advisor_output_tokens = nil
+	m.addadvisor_output_tokens = nil
+}
+
+// SetAdvisorCacheCreationTokens sets the "advisor_cache_creation_tokens" field.
+func (m *UsageLogMutation) SetAdvisorCacheCreationTokens(i int) {
+	m.advisor_cache_creation_tokens = &i
+	m.addadvisor_cache_creation_tokens = nil
+}
+
+// AdvisorCacheCreationTokens returns the value of the "advisor_cache_creation_tokens" field in the mutation.
+func (m *UsageLogMutation) AdvisorCacheCreationTokens() (r int, exists bool) {
+	v := m.advisor_cache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorCacheCreationTokens returns the old "advisor_cache_creation_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorCacheCreationTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorCacheCreationTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorCacheCreationTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorCacheCreationTokens: %w", err)
+	}
+	return oldValue.AdvisorCacheCreationTokens, nil
+}
+
+// AddAdvisorCacheCreationTokens adds i to the "advisor_cache_creation_tokens" field.
+func (m *UsageLogMutation) AddAdvisorCacheCreationTokens(i int) {
+	if m.addadvisor_cache_creation_tokens != nil {
+		*m.addadvisor_cache_creation_tokens += i
+	} else {
+		m.addadvisor_cache_creation_tokens = &i
+	}
+}
+
+// AddedAdvisorCacheCreationTokens returns the value that was added to the "advisor_cache_creation_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorCacheCreationTokens() (r int, exists bool) {
+	v := m.addadvisor_cache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorCacheCreationTokens resets all changes to the "advisor_cache_creation_tokens" field.
+func (m *UsageLogMutation) ResetAdvisorCacheCreationTokens() {
+	m.advisor_cache_creation_tokens = nil
+	m.addadvisor_cache_creation_tokens = nil
+}
+
+// SetAdvisorCacheReadTokens sets the "advisor_cache_read_tokens" field.
+func (m *UsageLogMutation) SetAdvisorCacheReadTokens(i int) {
+	m.advisor_cache_read_tokens = &i
+	m.addadvisor_cache_read_tokens = nil
+}
+
+// AdvisorCacheReadTokens returns the value of the "advisor_cache_read_tokens" field in the mutation.
+func (m *UsageLogMutation) AdvisorCacheReadTokens() (r int, exists bool) {
+	v := m.advisor_cache_read_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorCacheReadTokens returns the old "advisor_cache_read_tokens" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorCacheReadTokens(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorCacheReadTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorCacheReadTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorCacheReadTokens: %w", err)
+	}
+	return oldValue.AdvisorCacheReadTokens, nil
+}
+
+// AddAdvisorCacheReadTokens adds i to the "advisor_cache_read_tokens" field.
+func (m *UsageLogMutation) AddAdvisorCacheReadTokens(i int) {
+	if m.addadvisor_cache_read_tokens != nil {
+		*m.addadvisor_cache_read_tokens += i
+	} else {
+		m.addadvisor_cache_read_tokens = &i
+	}
+}
+
+// AddedAdvisorCacheReadTokens returns the value that was added to the "advisor_cache_read_tokens" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorCacheReadTokens() (r int, exists bool) {
+	v := m.addadvisor_cache_read_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorCacheReadTokens resets all changes to the "advisor_cache_read_tokens" field.
+func (m *UsageLogMutation) ResetAdvisorCacheReadTokens() {
+	m.advisor_cache_read_tokens = nil
+	m.addadvisor_cache_read_tokens = nil
+}
+
+// SetAdvisorCost sets the "advisor_cost" field.
+func (m *UsageLogMutation) SetAdvisorCost(f float64) {
+	m.advisor_cost = &f
+	m.addadvisor_cost = nil
+}
+
+// AdvisorCost returns the value of the "advisor_cost" field in the mutation.
+func (m *UsageLogMutation) AdvisorCost() (r float64, exists bool) {
+	v := m.advisor_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAdvisorCost returns the old "advisor_cost" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAdvisorCost(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAdvisorCost is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAdvisorCost requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAdvisorCost: %w", err)
+	}
+	return oldValue.AdvisorCost, nil
+}
+
+// AddAdvisorCost adds f to the "advisor_cost" field.
+func (m *UsageLogMutation) AddAdvisorCost(f float64) {
+	if m.addadvisor_cost != nil {
+		*m.addadvisor_cost += f
+	} else {
+		m.addadvisor_cost = &f
+	}
+}
+
+// AddedAdvisorCost returns the value that was added to the "advisor_cost" field in this mutation.
+func (m *UsageLogMutation) AddedAdvisorCost() (r float64, exists bool) {
+	v := m.addadvisor_cost
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAdvisorCost resets all changes to the "advisor_cost" field.
+func (m *UsageLogMutation) ResetAdvisorCost() {
+	m.advisor_cost = nil
+	m.addadvisor_cost = nil
 }
 
 // SetInputCost sets the "input_cost" field.
@@ -47590,7 +47988,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 49)
+	fields := make([]string, 0, 56)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47659,6 +48057,27 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.cache_creation_12h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation12hTokens)
+	}
+	if m.advisor_model != nil {
+		fields = append(fields, usagelog.FieldAdvisorModel)
+	}
+	if m.advisor_calls != nil {
+		fields = append(fields, usagelog.FieldAdvisorCalls)
+	}
+	if m.advisor_input_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorInputTokens)
+	}
+	if m.advisor_output_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorOutputTokens)
+	}
+	if m.advisor_cache_creation_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorCacheCreationTokens)
+	}
+	if m.advisor_cache_read_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorCacheReadTokens)
+	}
+	if m.advisor_cost != nil {
+		fields = append(fields, usagelog.FieldAdvisorCost)
 	}
 	if m.input_cost != nil {
 		fields = append(fields, usagelog.FieldInputCost)
@@ -47792,6 +48211,20 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.CacheCreation12hTokens()
+	case usagelog.FieldAdvisorModel:
+		return m.AdvisorModel()
+	case usagelog.FieldAdvisorCalls:
+		return m.AdvisorCalls()
+	case usagelog.FieldAdvisorInputTokens:
+		return m.AdvisorInputTokens()
+	case usagelog.FieldAdvisorOutputTokens:
+		return m.AdvisorOutputTokens()
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		return m.AdvisorCacheCreationTokens()
+	case usagelog.FieldAdvisorCacheReadTokens:
+		return m.AdvisorCacheReadTokens()
+	case usagelog.FieldAdvisorCost:
+		return m.AdvisorCost()
 	case usagelog.FieldInputCost:
 		return m.InputCost()
 	case usagelog.FieldOutputCost:
@@ -47899,6 +48332,20 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreation30mTokens(ctx)
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.OldCacheCreation12hTokens(ctx)
+	case usagelog.FieldAdvisorModel:
+		return m.OldAdvisorModel(ctx)
+	case usagelog.FieldAdvisorCalls:
+		return m.OldAdvisorCalls(ctx)
+	case usagelog.FieldAdvisorInputTokens:
+		return m.OldAdvisorInputTokens(ctx)
+	case usagelog.FieldAdvisorOutputTokens:
+		return m.OldAdvisorOutputTokens(ctx)
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		return m.OldAdvisorCacheCreationTokens(ctx)
+	case usagelog.FieldAdvisorCacheReadTokens:
+		return m.OldAdvisorCacheReadTokens(ctx)
+	case usagelog.FieldAdvisorCost:
+		return m.OldAdvisorCost(ctx)
 	case usagelog.FieldInputCost:
 		return m.OldInputCost(ctx)
 	case usagelog.FieldOutputCost:
@@ -48121,6 +48568,55 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCacheCreation12hTokens(v)
 		return nil
+	case usagelog.FieldAdvisorModel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorModel(v)
+		return nil
+	case usagelog.FieldAdvisorCalls:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorCalls(v)
+		return nil
+	case usagelog.FieldAdvisorInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorInputTokens(v)
+		return nil
+	case usagelog.FieldAdvisorOutputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorOutputTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorCacheCreationTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCacheReadTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorCacheReadTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAdvisorCost(v)
+		return nil
 	case usagelog.FieldInputCost:
 		v, ok := value.(float64)
 		if !ok {
@@ -48338,6 +48834,24 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addcache_creation_12h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation12hTokens)
 	}
+	if m.addadvisor_calls != nil {
+		fields = append(fields, usagelog.FieldAdvisorCalls)
+	}
+	if m.addadvisor_input_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorInputTokens)
+	}
+	if m.addadvisor_output_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorOutputTokens)
+	}
+	if m.addadvisor_cache_creation_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorCacheCreationTokens)
+	}
+	if m.addadvisor_cache_read_tokens != nil {
+		fields = append(fields, usagelog.FieldAdvisorCacheReadTokens)
+	}
+	if m.addadvisor_cost != nil {
+		fields = append(fields, usagelog.FieldAdvisorCost)
+	}
 	if m.addinput_cost != nil {
 		fields = append(fields, usagelog.FieldInputCost)
 	}
@@ -48406,6 +48920,18 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
 		return m.AddedCacheCreation12hTokens()
+	case usagelog.FieldAdvisorCalls:
+		return m.AddedAdvisorCalls()
+	case usagelog.FieldAdvisorInputTokens:
+		return m.AddedAdvisorInputTokens()
+	case usagelog.FieldAdvisorOutputTokens:
+		return m.AddedAdvisorOutputTokens()
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		return m.AddedAdvisorCacheCreationTokens()
+	case usagelog.FieldAdvisorCacheReadTokens:
+		return m.AddedAdvisorCacheReadTokens()
+	case usagelog.FieldAdvisorCost:
+		return m.AddedAdvisorCost()
 	case usagelog.FieldInputCost:
 		return m.AddedInputCost()
 	case usagelog.FieldOutputCost:
@@ -48505,6 +49031,48 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCacheCreation12hTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCalls:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorCalls(v)
+		return nil
+	case usagelog.FieldAdvisorInputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorInputTokens(v)
+		return nil
+	case usagelog.FieldAdvisorOutputTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorOutputTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorCacheCreationTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCacheReadTokens:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorCacheReadTokens(v)
+		return nil
+	case usagelog.FieldAdvisorCost:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAdvisorCost(v)
 		return nil
 	case usagelog.FieldInputCost:
 		v, ok := value.(float64)
@@ -48642,6 +49210,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldSubscriptionID) {
 		fields = append(fields, usagelog.FieldSubscriptionID)
 	}
+	if m.FieldCleared(usagelog.FieldAdvisorModel) {
+		fields = append(fields, usagelog.FieldAdvisorModel)
+	}
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
@@ -48721,6 +49292,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ClearSubscriptionID()
+		return nil
+	case usagelog.FieldAdvisorModel:
+		m.ClearAdvisorModel()
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
@@ -48834,6 +49408,27 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCacheCreation12hTokens:
 		m.ResetCacheCreation12hTokens()
+		return nil
+	case usagelog.FieldAdvisorModel:
+		m.ResetAdvisorModel()
+		return nil
+	case usagelog.FieldAdvisorCalls:
+		m.ResetAdvisorCalls()
+		return nil
+	case usagelog.FieldAdvisorInputTokens:
+		m.ResetAdvisorInputTokens()
+		return nil
+	case usagelog.FieldAdvisorOutputTokens:
+		m.ResetAdvisorOutputTokens()
+		return nil
+	case usagelog.FieldAdvisorCacheCreationTokens:
+		m.ResetAdvisorCacheCreationTokens()
+		return nil
+	case usagelog.FieldAdvisorCacheReadTokens:
+		m.ResetAdvisorCacheReadTokens()
+		return nil
+	case usagelog.FieldAdvisorCost:
+		m.ResetAdvisorCost()
 		return nil
 	case usagelog.FieldInputCost:
 		m.ResetInputCost()

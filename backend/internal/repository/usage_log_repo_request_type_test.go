@@ -104,6 +104,13 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.NativeCompactionV2,
 			log.CacheCreation30mTokens,
 			log.CacheCreation12hTokens,
+			sqlmock.AnyArg(), // advisor_model
+			log.AdvisorCalls,
+			log.AdvisorInputTokens,
+			log.AdvisorOutputTokens,
+			log.AdvisorCacheCreationTokens,
+			log.AdvisorCacheReadTokens,
+			log.AdvisorCost,
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -201,6 +208,13 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.NativeCompactionV2,
 			log.CacheCreation30mTokens,
 			log.CacheCreation12hTokens,
+			sqlmock.AnyArg(), // advisor_model
+			log.AdvisorCalls,
+			log.AdvisorInputTokens,
+			log.AdvisorOutputTokens,
+			log.AdvisorCacheCreationTokens,
+			log.AdvisorCacheReadTokens,
+			log.AdvisorCost,
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -282,8 +296,8 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
-	require.Equal(t, true, prepared.args[len(prepared.args)-4])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-11])
+	require.Equal(t, true, prepared.args[len(prepared.args)-11])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -526,6 +540,7 @@ func TestUsageLogRepositoryUsageAggregatesFilterNativeCompactionV2(t *testing.T)
 				"cost", "actual_cost", "account_cost", "avg_duration_ms",
 			}))
 
+		expectAdvisorStatsQuery(mock, true)
 		_, err := repo.GetStatsWithFilters(context.Background(), filters)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -649,6 +664,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestedModelSource(t *testing.T)
 			AddRow(1, 0, nil, "/v1/responses", int64(1), int64(2), int64(3), int64(1), int64(3), 1.2, 1.0, 1.2, 20.0).
 			AddRow(0, 0, "/v1/responses", "/v1/responses", int64(1), int64(2), int64(3), int64(1), int64(3), 1.2, 1.0, 1.2, 20.0))
 
+	expectAdvisorStatsQuery(mock, "gpt-5")
 	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), stats.TotalRequests)
@@ -686,6 +702,7 @@ func TestUsageLogRepositoryGetStatsWithFiltersRequestTypePriority(t *testing.T) 
 			"avg_duration_ms",
 		}).AddRow(1, 1, nil, nil, int64(1), int64(2), int64(3), int64(1), int64(3), 1.2, 1.0, 1.2, 20.0))
 
+	expectAdvisorStatsQuery(mock, requestType)
 	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), stats.TotalRequests)
@@ -811,9 +828,16 @@ func TestUsageLogRepositoryGetStatsWithFiltersAlwaysReturnsAccountCost(t *testin
 			"requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens",
 			"cost", "actual_cost", "account_cost", "avg_duration_ms",
 		}).AddRow(1, 1, nil, nil, int64(50), int64(1000), int64(2000), int64(60), int64(40), 15.0, 12.5, 11.0, 100.0))
+	mock.ExpectQuery("(?s)FROM usage_logs\\s+WHERE advisor_calls > 0.*GROUP BY 1").
+		WillReturnRows(sqlmock.NewRows(advisorStatsColumns).
+			AddRow("claude-fable-5-2", int64(3), int64(4), int64(311423), int64(10019), int64(0), int64(0), 2.89, 2.89))
 
 	stats, err := repo.GetStatsWithFilters(context.Background(), filters)
 	require.NoError(t, err)
+	require.Equal(t, []usagestats.AdvisorStat{{
+		Model: "claude-fable-5-2", Requests: 3, Calls: 4, InputTokens: 311423, OutputTokens: 10019,
+		Cost: 2.89, ActualCost: 2.89,
+	}}, stats.Advisors)
 	require.NotNil(t, stats.TotalAccountCost, "TotalAccountCost must always be returned, even without AccountID filter")
 	require.Equal(t, 11.0, *stats.TotalAccountCost)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -963,9 +987,12 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
-			false, // native_compaction_v2
-			0,     // cache_creation_30m_tokens
-			0,     // cache_creation_12h_tokens
+			false,            // native_compaction_v2
+			0,                // cache_creation_30m_tokens
+			0,                // cache_creation_12h_tokens
+			sql.NullString{}, // advisor_model
+			0, 0, 0, 0, 0,    // advisor calls/tokens
+			0.0, // advisor_cost
 			now,
 		}})
 		require.NoError(t, err)
@@ -1048,6 +1075,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			sql.NullString{},  // advisor_model
+			0, 0, 0, 0, 0,     // advisor calls/tokens
+			0.0, // advisor_cost
 			now,
 		}})
 		require.NoError(t, err)
@@ -1113,6 +1143,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			true,              // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			sql.NullString{},  // advisor_model
+			0, 0, 0, 0, 0,     // advisor calls/tokens
+			0.0, // advisor_cost
 			now,
 		}})
 		require.NoError(t, err)
@@ -1179,6 +1212,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			0,                 // cache_creation_30m_tokens
 			0,                 // cache_creation_12h_tokens
+			sql.NullString{},  // advisor_model
+			0, 0, 0, 0, 0,     // advisor calls/tokens
+			0.0, // advisor_cost
 			now,
 		}})
 		require.NoError(t, err)
@@ -1186,4 +1222,16 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.Equal(t, "priority", *log.ServiceTier)
 	})
 
+}
+
+var advisorStatsColumns = []string{
+	"advisor_model", "requests", "calls", "input_tokens", "output_tokens",
+	"cache_creation_tokens", "cache_read_tokens", "cost", "actual_cost",
+}
+
+// expectAdvisorStatsQuery 断言 GetStatsWithFilters 的 advisor 汇总查询沿用主统计的筛选参数。
+func expectAdvisorStatsQuery(mock sqlmock.Sqlmock, args ...driver.Value) {
+	mock.ExpectQuery("(?s)FROM usage_logs.*advisor_calls > 0.*GROUP BY 1").
+		WithArgs(args...).
+		WillReturnRows(sqlmock.NewRows(advisorStatsColumns))
 }

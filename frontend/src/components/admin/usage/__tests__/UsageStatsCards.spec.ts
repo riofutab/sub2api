@@ -86,4 +86,42 @@ describe('UsageStatsCards', () => {
     expect(tooltip?.classes()).toContain('hidden')
     expect(tooltip?.classes()).not.toContain('opacity-0')
   })
+
+  it('hides the advisor table when no advisor usage exists', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: { stats },
+      global: { stubs: { Icon: true } },
+    })
+
+    expect(wrapper.text()).not.toContain('usage.advisor.title')
+  })
+
+  it('lists advisor usage per advisor model', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: {
+        stats: {
+          ...stats,
+          advisors: [{
+            model: 'claude-fable-5-2',
+            requests: 3,
+            calls: 4,
+            input_tokens: 311423,
+            output_tokens: 10019,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            cost: 2.892144,
+            actual_cost: 3.1813584,
+          }],
+        },
+      },
+      global: { stubs: { Icon: true } },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('usage.advisor.title')
+    expect(text).toContain('claude-fable-5-2')
+    expect(text).toContain('311.42K')
+    expect(text).toContain('10.02K')
+    expect(text).toContain('$3.1814')
+  })
 })

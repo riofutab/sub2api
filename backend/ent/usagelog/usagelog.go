@@ -60,6 +60,20 @@ const (
 	FieldCacheCreation30mTokens = "cache_creation_30m_tokens"
 	// FieldCacheCreation12hTokens holds the string denoting the cache_creation_12h_tokens field in the database.
 	FieldCacheCreation12hTokens = "cache_creation_12h_tokens"
+	// FieldAdvisorModel holds the string denoting the advisor_model field in the database.
+	FieldAdvisorModel = "advisor_model"
+	// FieldAdvisorCalls holds the string denoting the advisor_calls field in the database.
+	FieldAdvisorCalls = "advisor_calls"
+	// FieldAdvisorInputTokens holds the string denoting the advisor_input_tokens field in the database.
+	FieldAdvisorInputTokens = "advisor_input_tokens"
+	// FieldAdvisorOutputTokens holds the string denoting the advisor_output_tokens field in the database.
+	FieldAdvisorOutputTokens = "advisor_output_tokens"
+	// FieldAdvisorCacheCreationTokens holds the string denoting the advisor_cache_creation_tokens field in the database.
+	FieldAdvisorCacheCreationTokens = "advisor_cache_creation_tokens"
+	// FieldAdvisorCacheReadTokens holds the string denoting the advisor_cache_read_tokens field in the database.
+	FieldAdvisorCacheReadTokens = "advisor_cache_read_tokens"
+	// FieldAdvisorCost holds the string denoting the advisor_cost field in the database.
+	FieldAdvisorCost = "advisor_cost"
 	// FieldInputCost holds the string denoting the input_cost field in the database.
 	FieldInputCost = "input_cost"
 	// FieldOutputCost holds the string denoting the output_cost field in the database.
@@ -187,6 +201,13 @@ var Columns = []string{
 	FieldCacheCreation1hTokens,
 	FieldCacheCreation30mTokens,
 	FieldCacheCreation12hTokens,
+	FieldAdvisorModel,
+	FieldAdvisorCalls,
+	FieldAdvisorInputTokens,
+	FieldAdvisorOutputTokens,
+	FieldAdvisorCacheCreationTokens,
+	FieldAdvisorCacheReadTokens,
+	FieldAdvisorCost,
 	FieldInputCost,
 	FieldOutputCost,
 	FieldCacheCreationCost,
@@ -258,6 +279,20 @@ var (
 	DefaultCacheCreation30mTokens int
 	// DefaultCacheCreation12hTokens holds the default value on creation for the "cache_creation_12h_tokens" field.
 	DefaultCacheCreation12hTokens int
+	// AdvisorModelValidator is a validator for the "advisor_model" field. It is called by the builders before save.
+	AdvisorModelValidator func(string) error
+	// DefaultAdvisorCalls holds the default value on creation for the "advisor_calls" field.
+	DefaultAdvisorCalls int
+	// DefaultAdvisorInputTokens holds the default value on creation for the "advisor_input_tokens" field.
+	DefaultAdvisorInputTokens int
+	// DefaultAdvisorOutputTokens holds the default value on creation for the "advisor_output_tokens" field.
+	DefaultAdvisorOutputTokens int
+	// DefaultAdvisorCacheCreationTokens holds the default value on creation for the "advisor_cache_creation_tokens" field.
+	DefaultAdvisorCacheCreationTokens int
+	// DefaultAdvisorCacheReadTokens holds the default value on creation for the "advisor_cache_read_tokens" field.
+	DefaultAdvisorCacheReadTokens int
+	// DefaultAdvisorCost holds the default value on creation for the "advisor_cost" field.
+	DefaultAdvisorCost float64
 	// DefaultInputCost holds the default value on creation for the "input_cost" field.
 	DefaultInputCost float64
 	// DefaultOutputCost holds the default value on creation for the "output_cost" field.
@@ -423,6 +458,41 @@ func ByCacheCreation30mTokens(opts ...sql.OrderTermOption) OrderOption {
 // ByCacheCreation12hTokens orders the results by the cache_creation_12h_tokens field.
 func ByCacheCreation12hTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCacheCreation12hTokens, opts...).ToFunc()
+}
+
+// ByAdvisorModel orders the results by the advisor_model field.
+func ByAdvisorModel(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorModel, opts...).ToFunc()
+}
+
+// ByAdvisorCalls orders the results by the advisor_calls field.
+func ByAdvisorCalls(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorCalls, opts...).ToFunc()
+}
+
+// ByAdvisorInputTokens orders the results by the advisor_input_tokens field.
+func ByAdvisorInputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorInputTokens, opts...).ToFunc()
+}
+
+// ByAdvisorOutputTokens orders the results by the advisor_output_tokens field.
+func ByAdvisorOutputTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorOutputTokens, opts...).ToFunc()
+}
+
+// ByAdvisorCacheCreationTokens orders the results by the advisor_cache_creation_tokens field.
+func ByAdvisorCacheCreationTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorCacheCreationTokens, opts...).ToFunc()
+}
+
+// ByAdvisorCacheReadTokens orders the results by the advisor_cache_read_tokens field.
+func ByAdvisorCacheReadTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorCacheReadTokens, opts...).ToFunc()
+}
+
+// ByAdvisorCost orders the results by the advisor_cost field.
+func ByAdvisorCost(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAdvisorCost, opts...).ToFunc()
 }
 
 // ByInputCost orders the results by the input_cost field.

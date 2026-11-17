@@ -625,6 +625,16 @@ type UsageLog struct {
 	CacheCreation30mTokens int `json:"cache_creation_30m_tokens"`
 	CacheCreation12hTokens int `json:"cache_creation_12h_tokens"`
 
+	// Advisor 子推理用量（不含在上面的 token 计数里）；advisor_cost 已计入 total_cost（倍率前）。
+	// 没有 advisor 调用的记录省略这些字段。
+	AdvisorModel               *string `json:"advisor_model,omitempty"`
+	AdvisorCalls               int     `json:"advisor_calls,omitempty"`
+	AdvisorInputTokens         int     `json:"advisor_input_tokens,omitempty"`
+	AdvisorOutputTokens        int     `json:"advisor_output_tokens,omitempty"`
+	AdvisorCacheCreationTokens int     `json:"advisor_cache_creation_tokens,omitempty"`
+	AdvisorCacheReadTokens     int     `json:"advisor_cache_read_tokens,omitempty"`
+	AdvisorCost                float64 `json:"advisor_cost,omitempty"`
+
 	InputCost                 float64 `json:"input_cost"`
 	OutputCost                float64 `json:"output_cost"`
 	CacheCreationCost         float64 `json:"cache_creation_cost"`

@@ -5,7 +5,7 @@
 
 import { apiClient } from '../client'
 import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, UsageRequestType } from '@/types'
-import type { EndpointStat } from '@/types'
+import type { AdvisorStat, EndpointStat } from '@/types'
 
 // ==================== Types ====================
 
@@ -24,6 +24,7 @@ export interface AdminUsageStatsResponse {
   endpoints?: EndpointStat[]
   upstream_endpoints?: EndpointStat[]
   endpoint_paths?: EndpointStat[]
+  advisors?: AdvisorStat[]
 }
 
 export interface SimpleUser {

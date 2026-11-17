@@ -69,6 +69,20 @@ type UsageLog struct {
 	CacheCreation30mTokens int `json:"cache_creation_30m_tokens,omitempty"`
 	// CacheCreation12hTokens holds the value of the "cache_creation_12h_tokens" field.
 	CacheCreation12hTokens int `json:"cache_creation_12h_tokens,omitempty"`
+	// AdvisorModel holds the value of the "advisor_model" field.
+	AdvisorModel *string `json:"advisor_model,omitempty"`
+	// AdvisorCalls holds the value of the "advisor_calls" field.
+	AdvisorCalls int `json:"advisor_calls,omitempty"`
+	// AdvisorInputTokens holds the value of the "advisor_input_tokens" field.
+	AdvisorInputTokens int `json:"advisor_input_tokens,omitempty"`
+	// AdvisorOutputTokens holds the value of the "advisor_output_tokens" field.
+	AdvisorOutputTokens int `json:"advisor_output_tokens,omitempty"`
+	// AdvisorCacheCreationTokens holds the value of the "advisor_cache_creation_tokens" field.
+	AdvisorCacheCreationTokens int `json:"advisor_cache_creation_tokens,omitempty"`
+	// AdvisorCacheReadTokens holds the value of the "advisor_cache_read_tokens" field.
+	AdvisorCacheReadTokens int `json:"advisor_cache_read_tokens,omitempty"`
+	// 已计入 total_cost 的 advisor 费用（倍率前）
+	AdvisorCost float64 `json:"advisor_cost,omitempty"`
 	// InputCost holds the value of the "input_cost" field.
 	InputCost float64 `json:"input_cost,omitempty"`
 	// OutputCost holds the value of the "output_cost" field.
@@ -208,11 +222,11 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case usagelog.FieldUpstreamModelMismatch, usagelog.FieldLongContextBillingApplied, usagelog.FieldStream, usagelog.FieldCacheTTLOverridden:
 			values[i] = new(sql.NullBool)
-		case usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldAccountRateMultiplier:
+		case usagelog.FieldAdvisorCost, usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldAccountRateMultiplier:
 			values[i] = new(sql.NullFloat64)
-		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldCacheCreation30mTokens, usagelog.FieldCacheCreation12hTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldImageCount, usagelog.FieldVideoCount, usagelog.FieldVideoDurationSeconds:
+		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldCacheCreation30mTokens, usagelog.FieldCacheCreation12hTokens, usagelog.FieldAdvisorCalls, usagelog.FieldAdvisorInputTokens, usagelog.FieldAdvisorOutputTokens, usagelog.FieldAdvisorCacheCreationTokens, usagelog.FieldAdvisorCacheReadTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldImageCount, usagelog.FieldVideoCount, usagelog.FieldVideoDurationSeconds:
 			values[i] = new(sql.NullInt64)
-		case usagelog.FieldRequestID, usagelog.FieldModel, usagelog.FieldRequestedModel, usagelog.FieldUpstreamModel, usagelog.FieldUpstreamResponseModel, usagelog.FieldModelMappingChain, usagelog.FieldBillingTier, usagelog.FieldBillingMode, usagelog.FieldUserAgent, usagelog.FieldIPAddress, usagelog.FieldImageSize, usagelog.FieldImageInputSize, usagelog.FieldImageOutputSize, usagelog.FieldImageSizeSource, usagelog.FieldVideoResolution:
+		case usagelog.FieldRequestID, usagelog.FieldModel, usagelog.FieldRequestedModel, usagelog.FieldUpstreamModel, usagelog.FieldUpstreamResponseModel, usagelog.FieldModelMappingChain, usagelog.FieldBillingTier, usagelog.FieldBillingMode, usagelog.FieldAdvisorModel, usagelog.FieldUserAgent, usagelog.FieldIPAddress, usagelog.FieldImageSize, usagelog.FieldImageInputSize, usagelog.FieldImageOutputSize, usagelog.FieldImageSizeSource, usagelog.FieldVideoResolution:
 			values[i] = new(sql.NullString)
 		case usagelog.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -384,6 +398,49 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field cache_creation_12h_tokens", values[i])
 			} else if value.Valid {
 				_m.CacheCreation12hTokens = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorModel:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_model", values[i])
+			} else if value.Valid {
+				_m.AdvisorModel = new(string)
+				*_m.AdvisorModel = value.String
+			}
+		case usagelog.FieldAdvisorCalls:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_calls", values[i])
+			} else if value.Valid {
+				_m.AdvisorCalls = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorInputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_input_tokens", values[i])
+			} else if value.Valid {
+				_m.AdvisorInputTokens = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorOutputTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_output_tokens", values[i])
+			} else if value.Valid {
+				_m.AdvisorOutputTokens = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorCacheCreationTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_cache_creation_tokens", values[i])
+			} else if value.Valid {
+				_m.AdvisorCacheCreationTokens = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorCacheReadTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_cache_read_tokens", values[i])
+			} else if value.Valid {
+				_m.AdvisorCacheReadTokens = int(value.Int64)
+			}
+		case usagelog.FieldAdvisorCost:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field advisor_cost", values[i])
+			} else if value.Valid {
+				_m.AdvisorCost = value.Float64
 			}
 		case usagelog.FieldInputCost:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -703,6 +760,29 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cache_creation_12h_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreation12hTokens))
+	builder.WriteString(", ")
+	if v := _m.AdvisorModel; v != nil {
+		builder.WriteString("advisor_model=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	builder.WriteString("advisor_calls=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorCalls))
+	builder.WriteString(", ")
+	builder.WriteString("advisor_input_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorInputTokens))
+	builder.WriteString(", ")
+	builder.WriteString("advisor_output_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorOutputTokens))
+	builder.WriteString(", ")
+	builder.WriteString("advisor_cache_creation_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorCacheCreationTokens))
+	builder.WriteString(", ")
+	builder.WriteString("advisor_cache_read_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorCacheReadTokens))
+	builder.WriteString(", ")
+	builder.WriteString("advisor_cost=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AdvisorCost))
 	builder.WriteString(", ")
 	builder.WriteString("input_cost=")
 	builder.WriteString(fmt.Sprintf("%v", _m.InputCost))

@@ -1850,6 +1850,15 @@ export interface UsageLog {
   cache_creation_30m_tokens?: number
   cache_creation_12h_tokens?: number
 
+  // Advisor 子推理用量（不含在上面的 token 计数里）；advisor_cost 已计入 total_cost（倍率前）。没有 advisor 调用时省略。
+  advisor_model?: string | null
+  advisor_calls?: number
+  advisor_input_tokens?: number
+  advisor_output_tokens?: number
+  advisor_cache_creation_tokens?: number
+  advisor_cache_read_tokens?: number
+  advisor_cost?: number
+
   input_cost: number
   output_cost: number
   cache_creation_cost: number
@@ -2064,6 +2073,20 @@ export interface UsageStatsResponse {
   endpoints?: EndpointStat[]
   upstream_endpoints?: EndpointStat[]
   endpoint_paths?: EndpointStat[]
+  advisors?: AdvisorStat[]
+}
+
+// AdvisorStat 按 advisor 模型汇总的子推理用量；token 不含在 total_*_tokens 里，费用已含在 total_cost 里。
+export interface AdvisorStat {
+  model: string
+  requests: number
+  calls: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  cost: number
+  actual_cost: number
 }
 
 // ==================== Trend & Chart Types ====================
