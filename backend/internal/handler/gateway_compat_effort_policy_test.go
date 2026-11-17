@@ -43,7 +43,7 @@ func (u *compatEffortPolicyUpstream) DoWithTLS(req *http.Request, _ string, _ in
 
 func TestGatewayCompatibilityHandlersReasoningEffortPolicy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	const model = "claude-sonnet-4.5"
+	const model = "claude-opus-4-5" // fork 只对目录内模型发 output_config.effort
 	for _, endpoint := range []string{"chat/completions", "responses"} {
 		for _, platform := range []string{service.PlatformAnthropic, service.PlatformComposite} {
 			for _, stream := range []bool{false, true} {
