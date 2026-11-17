@@ -771,7 +771,12 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import { buildOpenAIUsageRefreshKey, type BatchedUsageRequestOptions } from '@/utils/accountUsageRefresh'
+import {
+  buildAnthropicUsageRefreshKey,
+  buildGeminiUsageRefreshKey,
+  buildOpenAIUsageRefreshKey,
+  type BatchedUsageRequestOptions
+} from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber, formatDateTime } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
@@ -926,7 +931,12 @@ const hasOpenAIQuotaObservation = computed(() => {
 
 const sevenDayEstimatedTotalCost = computed(() => estimateWindowTotalCost(usageInfo.value?.seven_day))
 
-const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))
+// Each builder returns '' for other platforms, so at most one contributes.
+const usageRefreshKey = computed(() => (
+  buildOpenAIUsageRefreshKey(props.account) ||
+  buildAnthropicUsageRefreshKey(props.account) ||
+  buildGeminiUsageRefreshKey(props.account)
+))
 
 const shouldAutoLoadUsageOnMount = computed(() => {
   return shouldFetchUsage.value
@@ -1815,9 +1825,8 @@ watch(
   { flush: 'post' }
 )
 
-watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
+watch(usageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
 
   // 数据变化只绕过前端缓存；force 会让后端跳过探测缓存并回写 extra/updated_at，
   // 进而再次改变 key，形成每轮自动刷新都强制探测上游的循环。
@@ -1827,7 +1836,7 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   }
 
   _usageCache.delete(props.account.id)
-  requestAutoLoad()
+  requestAutoLoad(isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined)
 })
 
 watch(
