@@ -58,12 +58,12 @@ func resolveAntigravityForwardBaseURL(account *Account) string {
 // resolveAntigravityForwardBaseURLs 解析按容灾优先级排序的转发用 base URLs 列表。
 //
 // 策略规则：
-// 1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=prod 优先级最高，返回 [prod]。
-// 2. 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
-//    仅使用 daily 端点 [daily]，不回退已下线的 prod 端点。
-// 3. 免费/非付费账号：
-//   - GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily/sandbox 时返回 [daily, prod]。
-//   - 默认返回 [prod]。
+//  1. 显式环境变量 GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=prod 优先级最高，返回 [prod]。
+//  2. 付费账号（包含 Google One AI Pro/Ultra，plan_type 经 IsPaidPlanType 判定）：
+//     仅使用 daily 端点 [daily]，不回退已下线的 prod 端点。
+//  3. 免费/非付费账号：
+//     - GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL=daily/sandbox 时返回 [daily, prod]。
+//     - 默认返回 [prod]。
 func resolveAntigravityForwardBaseURLs(account *Account) []string {
 	baseURLs := antigravity.BaseURLs
 	if len(baseURLs) == 0 {
