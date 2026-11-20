@@ -702,6 +702,11 @@ type ClaudeUsage struct {
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
 	// Advisor 来自 usage.iterations[]，不在顶层计数里，由各解析路径显式填充。
 	Advisor AdvisorUsage `json:"-"`
+
+	cacheCreationInputTokensPresent     bool
+	cacheCreationInputTokensFromDetails bool
+	promptTotalTokens                   int
+	promptTotalPresent                  bool
 }
 
 // ForwardResult 转发结果
