@@ -2874,16 +2874,16 @@ func validateGPT61RawEffort(body []byte, model string) error {
 			return err
 		}
 	}
-	// Only a canonical GPT-6.1 effort alias can supply an implicit effort.
+	// Only a canonical GPT-6.1/6.2 effort alias can supply an implicit effort.
 	// Arbitrary client aliases (for example "public-none") may map to this
 	// upstream model and must not be parsed as model-effort syntax.
 	// Match the normalization gates: null/empty reasoning fields do not override;
 	// output_config whitespace is non-empty and does suppress the alias suffix.
 	if !hasEffectiveGPT61CompatEffort(body) {
 		requestedModel := openai.CanonicalizeOpenAIModelAliasSpelling(gjson.GetBytes(body, "model").String())
-		for _, prefix := range []string{"gpt-6.1-sol-", "gpt-6.1-terra-"} {
+		for _, prefix := range []string{"gpt-6.1-sol-", "gpt-6.1-terra-", "gpt-6.2-sol-", "gpt-6.2-astra-"} {
 			if effort, ok := strings.CutPrefix(requestedModel, prefix); ok && effort != "openai-compact" &&
-				(openai.IsGPT61SolModelSpelling(requestedModel) || openai.IsGPT61TerraModelSpelling(requestedModel)) {
+				(openai.IsGPT61SolModelSpelling(requestedModel) || openai.IsGPT61TerraModelSpelling(requestedModel) || openai.GPT62ModelID(requestedModel) != "") {
 				return openai.ValidateGPT61ReasoningEffort(model, effort)
 			}
 		}
