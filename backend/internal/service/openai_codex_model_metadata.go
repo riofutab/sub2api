@@ -338,6 +338,11 @@ func groupCodexModelMetadata(
 			publicAlias = true
 		}
 		metadata, ok := account.GetUpstreamModelMetadata(lookupModel)
+		if lookupModel == modelID && upstreamModel == modelID {
+			if tierMetadata, matched := codexAntigravityTierMetadata(account, modelID); matched {
+				metadata, ok = tierMetadata, true
+			}
+		}
 		audioInput = audioInput && accountCodexModelSupportsAudioInput(account, lookupModel, metadata.InputModalities)
 		if !ok {
 			missingMetadata = true
