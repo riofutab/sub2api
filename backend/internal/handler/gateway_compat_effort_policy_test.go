@@ -42,7 +42,7 @@ func TestOpenAIResponsesUsageReportsConfigurationUpdateEffort(t *testing.T) {
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(
 		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo, nil, nil, nil, nil, nil, cfg,
-		nil, nil, service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{},
+		nil, nil, service.NewBillingService(cfg, nil), nil, billing, upstream, nil, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billing,
