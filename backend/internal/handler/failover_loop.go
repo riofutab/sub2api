@@ -250,7 +250,14 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 同账号重试用尽，执行临时封禁（每个请求最多封禁一个账号）
 	if failoverErr.RetryableOnSameAccount {
-		if s.tempUnscheduledAccountID == 0 || s.tempUnscheduledAccountID == accountID {
+		if failoverErr.EmptyStream {
+			// An empty stream is request-scoped: this request moves on to
+			// another account, but the shared account stays available to
+			// everyone else.
+			logger.FromContext(ctx).Warn("gateway.failover_empty_stream_not_cooled",
+				zap.Int64("account_id", accountID),
+			)
+		} else if s.tempUnscheduledAccountID == 0 || s.tempUnscheduledAccountID == accountID {
 			if !failoverErr.RequestScopedTransient {
 				s.tempUnscheduledAccountID = accountID
 			}

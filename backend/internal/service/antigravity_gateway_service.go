@@ -35,10 +35,13 @@ const (
 	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（无 retryDelay 时使用）
 
 	// MODEL_CAPACITY_EXHAUSTED 专用重试参数
-	// 模型容量不足时，所有账号共享同一容量池，切换账号无意义
-	// 使用固定 1s 间隔重试，最多重试 60 次
+	// 单账号模式（没有其他账号可换）：固定 1s 间隔，最多重试 60 次
 	antigravityModelCapacityRetryMaxAttempts = 60
 	antigravityModelCapacityRetryWait        = 1 * time.Second
+	// 多账号模式：容量按账号分配（实测同一模型一个账号 503 80 s，另一个账号 1.9 s 返回），
+	// 同一账号只重试几次，然后让该账号的这个模型短暂冷却并切换账号
+	antigravityModelCapacitySwitchAttempts  = 2
+	antigravityModelCapacityAccountCooldown = 60 * time.Second
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -297,7 +300,7 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 // getMappedModel 获取映射后的模型名
 // 完全依赖映射配置：账户映射（通配符）→ 默认映射兜底
 func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
-	return s.getMappedModelForThinkingLevel(account, requestedModel, "")
+	return s.getMappedModelForThinkingLevel(account, requestedModel, "", "")
 }
 
 // getMappedModelForThinkingLevel 在常规映射之前先把裸 Gemini 模型名
@@ -305,7 +308,12 @@ func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedMo
 // Antigravity 目录只登记带后缀的变体，裸名直接转发会被上游以
 // 404 "Requested entity was not found." 拒绝，因此所有转发入口都必须经过这一步。
 // thinkingLevel 为空时按 high 兜底；调用方可按自身协议传入推导出的档位。
-func (s *AntigravityGatewayService) getMappedModelForThinkingLevel(account *Account, requestedModel string, thinkingLevel string) string {
+// familyLevel 是请求声明的思考档位（含 xhigh，空串表示未声明），用于
+// antigravityLevelFamilies 里只按档位区分上游 ID 的模型。
+func (s *AntigravityGatewayService) getMappedModelForThinkingLevel(account *Account, requestedModel string, thinkingLevel string, familyLevel string) string {
+	if mapped, ok := resolveAntigravityLevelFamily(account, requestedModel, familyLevel); ok {
+		return mapped
+	}
 	if mapped, ok := resolveGeminiThinkingVariantForLevel(account, requestedModel, thinkingLevel); ok {
 		return mapped
 	}

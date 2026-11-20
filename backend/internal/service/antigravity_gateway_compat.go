@@ -284,6 +284,7 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 		account,
 		request.originalModel,
 		geminiThinkingLevelFromClaudeBody(request.claudeBody, requestThinking),
+		antigravityFamilyLevelFromClaudeBody(request.claudeBody, requestThinking),
 	)
 	if mappedModel == "" {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
@@ -539,8 +540,9 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 	resp *http.Response,
 ) error {
 	body := s.readUpstreamErrorBody(resp)
-	s.handleUpstreamError(
+	s.handleUpstreamErrorAfterRetryLoop(
 		ctx,
+		c,
 		call.prefix,
 		account,
 		resp.StatusCode,

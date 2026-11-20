@@ -169,14 +169,23 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		var lastRetryResp *http.Response
 		var lastRetryBody []byte
 
-		// MODEL_CAPACITY_EXHAUSTED 使用独立的重试参数（60 次，固定 1s 间隔）
+		// MODEL_CAPACITY_EXHAUSTED 使用独立的重试参数（固定 1s 间隔）：
+		// 多账号模式只重试 antigravityModelCapacitySwitchAttempts 次后切换账号；
+		// 单账号模式最多 60 次，并做按模型的全局去重
 		maxAttempts := antigravitySmartRetryMaxAttempts
+		capacitySwitch := false
 		if isModelCapacityExhausted {
-			maxAttempts = antigravityModelCapacityRetryMaxAttempts
 			waitDuration = antigravityModelCapacityRetryWait
+			capacitySwitch = !isSingleAccountRetry(p.ctx)
+			if capacitySwitch {
+				maxAttempts = antigravityModelCapacitySwitchAttempts
+			} else {
+				maxAttempts = antigravityModelCapacityRetryMaxAttempts
+			}
 
-			// 全局去重：如果其他 goroutine 已在重试同一模型且尚在 cooldown 中，直接返回 503
-			if modelName != "" {
+			// 全局去重（仅单账号模式）：如果其他 goroutine 已在重试同一模型且尚在 cooldown 中，直接返回 503。
+			// 多账号模式不用它：它按模型而非账号记录，会让一个账号的容量不足拖累其他账号的请求。
+			if modelName != "" && !capacitySwitch {
 				modelCapacityExhaustedMu.RLock()
 				cooldownUntil, exists := modelCapacityExhaustedUntil[modelName]
 				modelCapacityExhaustedMu.RUnlock()
@@ -270,7 +279,27 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			retryBody = respBody
 		}
 
-		// MODEL_CAPACITY_EXHAUSTED：模型容量不足，切换账号无意义
+		// MODEL_CAPACITY_EXHAUSTED，多账号模式：只让本账号的这个模型短暂冷却（不写 Gemini 家族 scope），
+		// 清除粘性会话并切换账号
+		if isModelCapacityExhausted && capacitySwitch {
+			resetAt := time.Now().Add(antigravityModelCapacityAccountCooldown)
+			if modelName != "" && setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, true) {
+				s.updateAccountModelRateLimitInCache(p.ctx, p.account, modelName, resetAt)
+			}
+			log.Printf("%s status=%d smart_retry_exhausted_model_capacity attempts=%d model=%s account=%d body=%s (switch account)",
+				p.prefix, resp.StatusCode, maxAttempts, modelName, p.account.ID, truncateForLog(retryBody, 200))
+			s.clearStickySession(p.ctx, p.groupID, p.sessionHash)
+			return &smartRetryResult{
+				action: smartRetryActionBreakWithResp,
+				switchError: &AntigravityAccountSwitchError{
+					OriginalAccountID: p.account.ID,
+					RateLimitedModel:  modelName,
+					IsStickySession:   p.isStickySession,
+				},
+			}
+		}
+
+		// MODEL_CAPACITY_EXHAUSTED，单账号模式：没有其他账号可换
 		// 直接返回上游错误响应，不设置模型限流，不切换账号
 		if isModelCapacityExhausted {
 			// 设置 cooldown，让后续请求快速失败，避免重复重试
@@ -642,8 +671,12 @@ urlFallbackLoop:
 						continue
 					}
 
-					// 重试用尽，标记账户限流
-					p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
+					// 重试用尽，标记账户限流（无原因的 429 每个请求最多冷却一个账号）
+					if isBareAntigravity429(resp.StatusCode, respBody) && !claimBare429Cooldown(p.c, p.account.ID) {
+						logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d bare_429_cooldown_skipped account=%d (this request already cooled another account; the request is the likely cause)", p.prefix, resp.StatusCode, p.account.ID)
+					} else {
+						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
+					}
 					logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d rate_limited base_url=%s body=%s", p.prefix, resp.StatusCode, baseURL, truncateForLog(respBody, 200))
 					resp = &http.Response{
 						StatusCode: resp.StatusCode,
@@ -833,11 +866,14 @@ func tempUnscheduleGoogleConfigError(ctx context.Context, repo AccountRepository
 // emptyResponseCooldown 空流式响应的临时封禁时长
 const emptyResponseCooldown = 1 * time.Minute
 
+// emptyResponseCooldownReason is the reason recorded with that cooldown.
+const emptyResponseCooldownReason = "empty stream response (auto temp-unschedule 1m)"
+
 // tempUnscheduleEmptyResponse 对空流式响应触发临时封禁，
 // 避免短时间内反复调度到同一个返回空响应的账号。
 func tempUnscheduleEmptyResponse(ctx context.Context, repo AccountRepository, accountID int64, logPrefix string) {
 	until := time.Now().Add(emptyResponseCooldown)
-	reason := "empty stream response (auto temp-unschedule 1m)"
+	reason := emptyResponseCooldownReason
 	if err := repo.SetTempUnschedulable(ctx, accountID, until, reason); err != nil {
 		log.Printf("%s temp_unschedule_failed account=%d error=%v", logPrefix, accountID, err)
 	} else {

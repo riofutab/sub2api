@@ -46,6 +46,8 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gpt-5.6')
     expect(models).toContain('gpt-6')
     expect(models).toContain('gpt-6-astra')
+    expect(models).toContain('gpt-6.2-sol')
+    expect(models).toContain('gpt-6.2-astra')
     expect(models).toContain('gpt-6.1-sol')
     expect(models).toContain('gpt-6.1-terra')
     expect(models).toContain('gpt-6-sol')
@@ -56,6 +58,8 @@ describe('useModelWhitelist', () => {
 
   it('openai 预设映射包含 GPT-6 别名和 Astra', () => {
     expect(getPresetMappingsByPlatform('openai')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'GPT-6.2 Sol', from: 'gpt-6.2-sol', to: 'gpt-6.2-sol' }),
+      expect.objectContaining({ label: 'GPT-6.2 Astra', from: 'gpt-6.2-astra', to: 'gpt-6.2-astra' }),
       expect.objectContaining({ label: 'GPT-6.1 Sol', from: 'gpt-6.1-sol', to: 'gpt-6.1-sol' }),
       expect.objectContaining({ label: 'GPT-6.1 Terra', from: 'gpt-6.1-terra', to: 'gpt-6.1-terra' }),
       expect.objectContaining({ label: 'GPT-6', from: 'gpt-6', to: 'gpt-6' }),
@@ -214,16 +218,28 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gemini-3.1-pro')
   })
 
-  it('Gemini 4 Carbon exposes the official API model without invented aliases', () => {
+  it('Gemini 4 Carbon, Neon and Hydrogen expose the official API IDs and Antigravity tiered IDs', () => {
     const models = getModelsByPlatform('gemini')
-    expect(models).toContain('gemini-4-carbon')
-    expect(models).not.toContain('gemini-4-carbon-preview')
-    expect(getModelsByPlatform('antigravity')).toContain('gemini-4-carbon')
-    expect(getPresetMappingsByPlatform('antigravity')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ from: 'gemini-4-carbon', to: 'gemini-4-carbon' })
-    ]))
-    expect(buildModelMappingObject('whitelist', ['gemini-4-carbon'], [])).toEqual({
-      'gemini-4-carbon': 'gemini-4-carbon'
+    const agModels = getModelsByPlatform('antigravity')
+    const presets = getPresetMappingsByPlatform('antigravity')
+    for (const [model, levels] of [
+      ['gemini-4-carbon', ['low', 'medium', 'high']],
+      ['gemini-4-neon', ['low', 'medium', 'high', 'xhigh']],
+      ['gemini-4-hydrogen', ['low', 'medium', 'high', 'xhigh']]
+    ] as const) {
+      expect(models).toContain(model)
+      expect(models).not.toContain(`${model}-preview`)
+      // Antigravity answers 404 to the bare IDs.
+      expect(agModels).not.toContain(model)
+      expect(presets).toEqual(expect.arrayContaining([expect.objectContaining({ from: model, to: `${model}-high` })]))
+      for (const level of levels) {
+        expect(agModels).toContain(`${model}-${level}`)
+        expect(presets).toEqual(expect.arrayContaining([expect.objectContaining({ from: `${model}-${level}`, to: `${model}-${level}` })]))
+      }
+    }
+    expect(agModels).not.toContain('gemini-4-carbon-xhigh')
+    expect(buildModelMappingObject('whitelist', ['gemini-4-neon-xhigh'], [])).toEqual({
+      'gemini-4-neon-xhigh': 'gemini-4-neon-xhigh'
     })
   })
 
