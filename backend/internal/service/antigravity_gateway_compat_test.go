@@ -1673,3 +1673,35 @@ func TestAntigravityCompatInterleavedThoughtChunksResetIdleTimeout(t *testing.T)
 	require.Contains(t, out, "event: response.completed")
 	require.NotContains(t, out, "stream_timeout")
 }
+
+func TestTempUnscheduleRetryableErrorSkipsMalformedFunctionCall(t *testing.T) {
+	repo := &malformedTempUnschedRepo{}
+	svc := &GatewayService{accountRepo: repo}
+
+	svc.TempUnscheduleRetryableError(context.Background(), 6, antigravityMalformedFunctionCallFailoverError())
+	require.Empty(t, repo.ids)
+
+	emptyErr, ok := antigravityCompatEmptyStreamError().(*UpstreamFailoverError)
+	require.True(t, ok)
+	svc.TempUnscheduleRetryableError(context.Background(), 6, emptyErr)
+	require.Empty(t, repo.ids, "an empty stream is request-scoped: no shared account is cooled")
+
+	otherErr := &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+	svc.TempUnscheduleRetryableError(context.Background(), 7, otherErr)
+	require.Equal(t, []int64{7}, repo.ids, "other retryable 502s keep their cooldown")
+}
+
+type malformedTempUnschedRepo struct {
+	AccountRepository
+	ids []int64
+}
+
+// GetByID 供 fork 的号池重试状态判断使用；返回普通账号，不影响冷却判定。
+func (r *malformedTempUnschedRepo) GetByID(_ context.Context, id int64) (*Account, error) {
+	return &Account{ID: id}, nil
+}
+
+func (r *malformedTempUnschedRepo) SetTempUnschedulable(_ context.Context, id int64, _ time.Time, _ string) error {
+	r.ids = append(r.ids, id)
+	return nil
+}
