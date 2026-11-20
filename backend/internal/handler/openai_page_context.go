@@ -49,7 +49,12 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 				continue
 			}
 		}
-		name, output := readString("name"), readString("output")
+		name := readString("name")
+		var rawOutput *string
+		if json.Unmarshal(item["output"], &rawOutput) != nil || rawOutput == nil {
+			continue
+		}
+		output := *rawOutput
 		var text string
 		switch {
 		case namespace == "agent" && validCodexUntrustedContext(name, output):
@@ -100,8 +105,14 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 // 与 context-fragments 还会产出 proposed_plan、untrusted_content。
 func validCodexUntrustedContext(name, output string) bool {
 	switch name {
-	case "browser_info", "goal_objective", "untrusted_context", "proposed_plan", "untrusted_content":
+	case "browser_info", "goal_objective", "untrusted_context", "ide_context":
 		return strings.TrimSpace(output) != ""
+	case "untrusted_content":
+		// Codex's fallback for an unnamed context source can carry any text, including an empty value.
+		return true
+	case "proposed_plan":
+		// Codex splits an approved plan by byte length, so a chunk can be all whitespace.
+		return output != ""
 	default:
 		return validCodexPageContext(name, output)
 	}
@@ -185,6 +196,7 @@ var (
 		[]byte("untrusted_context"),
 		[]byte("proposed_plan"),
 		[]byte("untrusted_content"),
+		[]byte("ide_context"),
 		[]byte("guardian_"),
 		[]byte("cloud_threads"),
 	}
