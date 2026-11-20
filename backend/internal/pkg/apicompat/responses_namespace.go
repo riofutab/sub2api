@@ -82,7 +82,11 @@ func FlattenResponsesNamespaceTools(tools []any, preserved map[string]bool) (map
 		}
 		for _, rawChild := range namespaceChildren(tool) {
 			child, ok := rawChild.(map[string]any)
-			if !ok || strings.TrimSpace(stringValue(child["type"])) != "function" {
+			if !ok {
+				continue
+			}
+			childType := strings.TrimSpace(stringValue(child["type"]))
+			if childType != "function" && childType != "custom" {
 				continue
 			}
 			name := strings.TrimSpace(stringValue(child["name"]))
@@ -90,7 +94,7 @@ func FlattenResponsesNamespaceTools(tools []any, preserved map[string]bool) (map
 				continue
 			}
 			flat := flattenNamespaceToolName(namespace, name)
-			entry := ResponsesNamespaceName{Namespace: namespace, Name: name}
+			entry := ResponsesNamespaceName{Namespace: namespace, Name: name, Custom: childType == "custom"}
 			if topLevel[flat] {
 				return nil, nil, false, fmt.Errorf("namespace tool %q/%q flattens to %q which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools", namespace, name, flat)
 			}
@@ -119,7 +123,11 @@ func FlattenResponsesNamespaceTools(tools []any, preserved map[string]bool) (map
 		}
 		for _, rawChild := range namespaceChildren(tool) {
 			child, ok := rawChild.(map[string]any)
-			if !ok || strings.TrimSpace(stringValue(child["type"])) != "function" {
+			if !ok {
+				continue
+			}
+			childType := strings.TrimSpace(stringValue(child["type"]))
+			if childType != "function" && childType != "custom" {
 				continue
 			}
 			name := strings.TrimSpace(stringValue(child["name"]))
@@ -177,7 +185,8 @@ func rewriteNamespaceQualifiedCalls(value any, names map[string]ResponsesNamespa
 			rewriteNamespaceQualifiedCalls(item, names)
 		}
 	case map[string]any:
-		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
+		switch strings.TrimSpace(stringValue(typed["type"])) {
+		case "function_call", "custom_tool_call":
 			rewriteNamespaceQualifiedCall(typed, names)
 		}
 		for _, child := range typed {
@@ -218,7 +227,8 @@ func restoreResponsesNamespaceValue(value any, names map[string]ResponsesNamespa
 			changed = restoreResponsesNamespaceValue(item, names) || changed
 		}
 	case map[string]any:
-		if strings.TrimSpace(stringValue(typed["type"])) == "function_call" {
+		switch strings.TrimSpace(stringValue(typed["type"])) {
+		case "function_call", "custom_tool_call":
 			if entry, ok := names[strings.TrimSpace(stringValue(typed["name"]))]; ok {
 				typed["name"] = entry.Name
 				typed["namespace"] = entry.Namespace
