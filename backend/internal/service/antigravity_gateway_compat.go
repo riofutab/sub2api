@@ -284,6 +284,7 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 		account,
 		request.originalModel,
 		geminiThinkingLevelFromClaudeBody(request.claudeBody, requestThinking),
+		antigravityFamilyLevelFromClaudeBody(request.claudeBody, requestThinking),
 	)
 	if mappedModel == "" {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
