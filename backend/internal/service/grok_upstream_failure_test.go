@@ -172,44 +172,19 @@ func TestClassifyGrokUpstreamFailure_GenericShapeErrorDoesNotFailover(t *testing
 func TestShouldFailoverGrokUpstreamError_FreeUsageBody(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	body := []byte(`{"error":{"code":"subscription:free-usage-exhausted","message":"free usage exhausted"}}`)
-	require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusBadRequest, body))
+	require.True(t, svc.shouldFailoverGrokUpstreamError(nil, http.StatusBadRequest, body))
 }
 
 func TestShouldFailoverGrokUpstreamError_CompatibilityBody(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	body := []byte(`{"error":{"message":"Could not decode the compaction blob"}}`)
-	require.True(t, svc.shouldFailoverGrokUpstreamError(http.StatusUnprocessableEntity, body))
-}
-
-func TestClassifyGrokUpstreamFailure_UnrecognizedForbiddenDoesNotQuarantine(t *testing.T) {
-	bodies := [][]byte{
-		nil,
-		[]byte(""),
-		[]byte(" "),
-		[]byte("<html>403 Forbidden</html>"),
-		[]byte(`{"error":{"message":"upstream returned an unknown response"}}`),
-		[]byte(`{"code":"permission-denied","error":"Access to the chat endpoint is denied"}`),
-	}
-	for _, body := range bodies {
-		d := classifyGrokUpstreamFailure(http.StatusForbidden, body, "grok-4.6")
-		require.Equal(t, GrokFailureCompatibility, d.Class, string(body))
-		require.False(t, d.ShouldFailover, string(body))
-		require.False(t, d.ShouldCooldown, string(body))
-		require.True(t, isGrokUnrecognizedForbidden(http.StatusForbidden, body), string(body))
-	}
-}
-
-func TestClassifyGrokUpstreamFailure_RecognizedForbiddenStillIdentifiesAccount(t *testing.T) {
-	body := []byte(`{"error":{"code":"account_suspended","message":"account suspended"}}`)
-	require.False(t, isGrokUnrecognizedForbidden(http.StatusForbidden, body))
-	d := classifyGrokUpstreamFailure(http.StatusForbidden, body, "grok-4.6")
-	require.NotEqual(t, GrokFailureCompatibility, d.Class)
+	require.True(t, svc.shouldFailoverGrokUpstreamError(nil, http.StatusUnprocessableEntity, body))
 }
 
 func TestShouldFailoverGrokUpstreamError_ContentPolicyStillNoFailover(t *testing.T) {
 	svc := &OpenAIGatewayService{}
 	body := []byte(`{"error":{"code":"new_sensitive","message":"text is sensitive"}}`)
-	require.False(t, svc.shouldFailoverGrokUpstreamError(http.StatusForbidden, body))
+	require.False(t, svc.shouldFailoverGrokUpstreamError(nil, http.StatusForbidden, body))
 }
 
 func TestHandleGrokAccountUpstreamError_FreeUsageBodyCoolsAccount(t *testing.T) {

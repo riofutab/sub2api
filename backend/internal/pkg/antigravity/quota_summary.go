@@ -79,34 +79,43 @@ func isPermissionDenied(err error) bool {
 // accounts' Gemini quota, and prod kept returning the old weekly figure (45.8%) with the 5-hour
 // window never starting, while daily and the Antigravity app showed the real 5.9% / 7.5%.
 func (c *Client) RetrieveUserQuotaSummary(ctx context.Context, accessToken, projectID string) (*QuotaSummaryResponse, error) {
-	summary, err := c.retrieveUserQuotaSummaryWithUserAgent(ctx, accessToken, projectID, GetUserAgentForContext(ctx))
+	endpoints := quotaSummaryBaseURLs
+	if len(endpoints) == 0 {
+		endpoints = ForwardBaseURLs()
+	}
+	return c.RetrieveUserQuotaSummaryWithURLs(ctx, endpoints, accessToken, projectID)
+}
+
+// RetrieveUserQuotaSummaryWithURLs reads the account's per-group 5-hour and weekly quota windows,
+// trying each supplied base URL in order and falling back on retryable statuses.
+func (c *Client) RetrieveUserQuotaSummaryWithURLs(ctx context.Context, baseURLs []string, accessToken, projectID string) (*QuotaSummaryResponse, error) {
+	if len(baseURLs) == 0 {
+		return nil, errors.New("retrieveUserQuotaSummary base URLs are required")
+	}
+	summary, err := c.retrieveUserQuotaSummaryWithUserAgent(ctx, baseURLs, accessToken, projectID, GetUserAgentForContext(ctx))
 	if err == nil {
 		return summary, nil
 	}
 	// The summary endpoint, unlike fetchAvailableModels, rejects the hub UA format
 	// with 403. Retry once with the official hub fingerprint before giving up.
 	if isPermissionDenied(err) {
-		if summary, fbErr := c.retrieveUserQuotaSummaryWithUserAgent(ctx, accessToken, projectID, quotaSummaryFallbackUserAgent); fbErr == nil {
+		if summary, fbErr := c.retrieveUserQuotaSummaryWithUserAgent(ctx, baseURLs, accessToken, projectID, quotaSummaryFallbackUserAgent); fbErr == nil {
 			return summary, nil
 		}
 	}
 	return nil, err
 }
 
-func (c *Client) retrieveUserQuotaSummaryWithUserAgent(ctx context.Context, accessToken, projectID, userAgent string) (*QuotaSummaryResponse, error) {
-	endpoints := quotaSummaryBaseURLs
-	if len(endpoints) == 0 {
-		endpoints = ForwardBaseURLs()
-	}
+func (c *Client) retrieveUserQuotaSummaryWithUserAgent(ctx context.Context, baseURLs []string, accessToken, projectID, userAgent string) (*QuotaSummaryResponse, error) {
 	var lastErr error
-	for urlIdx, baseURL := range endpoints {
+	for urlIdx, baseURL := range baseURLs {
 		summary, status, err := c.retrieveUserQuotaSummary(ctx, baseURL, accessToken, projectID, userAgent)
 		if err == nil {
 			DefaultURLAvailability.MarkSuccess(baseURL)
 			return summary, nil
 		}
 		lastErr = err
-		if urlIdx < len(endpoints)-1 && shouldFallbackToNextURL(nil, status) {
+		if urlIdx < len(baseURLs)-1 && shouldFallbackToNextURL(nil, status) {
 			continue
 		}
 		return nil, err

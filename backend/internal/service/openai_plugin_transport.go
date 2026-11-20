@@ -1,6 +1,10 @@
 package service
 
-import "net/http"
+import (
+	"net/http"
+
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -12,7 +16,10 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // TLS 指纹伪装：对启用了 enable_tls_fingerprint 的 OpenAI OAuth/SetupToken
 // 账号，走 DoWithTLS 用内置 Codex (OpenSSL 3.5) 指纹握手；未启用时仍调用 Do，
 // 调用路径与启用前完全一致。
+//
+// 返回时请求体已交给上游，改写峰值内存的预留降到一份请求体，流式期间不再占满预算。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	defer pkghttputil.SettleJSONProcessingMemory(request.Context())
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
