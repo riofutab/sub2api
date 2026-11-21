@@ -105,7 +105,7 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 // 与 context-fragments 还会产出 proposed_plan、untrusted_content。
 func validCodexUntrustedContext(name, output string) bool {
 	switch name {
-	case "browser_info", "goal_objective", "untrusted_context", "ide_context":
+	case "browser_info", "terminal_info", "goal_objective", "untrusted_context", "ide_context":
 		return strings.TrimSpace(output) != ""
 	case "untrusted_content":
 		// Codex's fallback for an unnamed context source can carry any text, including an empty value.
@@ -192,6 +192,7 @@ var (
 		[]byte("codex_apps_open_page"),
 		[]byte("codex_apps_selected_page_part_"),
 		[]byte("browser_info"),
+		[]byte("terminal_info"),
 		[]byte("goal_objective"),
 		[]byte("untrusted_context"),
 		[]byte("proposed_plan"),
