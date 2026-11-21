@@ -97,7 +97,7 @@ func runOpenAIStreamKeyRetry(t *testing.T, input string, passthrough, failFallba
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(
 		accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
-		service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{},
+		service.NewBillingService(cfg, nil), nil, billing, upstream, nil, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil,
 	)
 	handler := NewOpenAIGatewayHandler(
