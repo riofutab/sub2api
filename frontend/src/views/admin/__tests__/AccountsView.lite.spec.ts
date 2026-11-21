@@ -10,6 +10,7 @@ const {
   listWithEtag,
   getById,
   getBatchTodayStats,
+  getBatchUsage,
   getUpstreamBillingProbeSettings,
   getUpstreamBillingRatesWithEtag,
   getAllProxies,
@@ -22,6 +23,7 @@ const {
   listWithEtag: vi.fn(),
   getById: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getBatchUsage: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn(),
   getUpstreamBillingRatesWithEtag: vi.fn(),
   getAllProxies: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock('@/api/admin', () => ({
       getById,
       listWithEtag,
       getBatchTodayStats,
+      getBatchUsage,
       getUpstreamBillingProbeSettings,
       getUpstreamBillingRatesWithEtag,
       delete: vi.fn(),
@@ -82,11 +85,6 @@ const AccountGroupsCellStub = defineComponent({
   template: '<span data-test="account-groups">{{ groups.map(group => group.name).join(",") }}</span>'
 })
 
-const AccountUsageCellStub = defineComponent({
-  props: { account: { type: Object, required: true } },
-  template: '<span data-test="usage-row">{{ account.extra?.session_window_utilization }}|{{ account.last_used_at }}</span>'
-})
-
 const EditAccountModalStub = defineComponent({
   props: { show: Boolean, account: { type: Object, default: null } },
   template: '<div data-test="edit-account">{{ show ? account?.name : "" }}</div>'
@@ -102,7 +100,7 @@ const AccountStatsModalStub = defineComponent({
   template: '<div data-test="stats-account">{{ show ? account?.name : "" }}</div>'
 })
 
-function mountView(stubActionMenu = true) {
+function mountView(stubActionMenu = true, realUsageCell = false) {
   return mount(AccountsView, {
     attachTo: document.body,
     global: {
@@ -133,7 +131,7 @@ function mountView(stubActionMenu = true) {
         AccountStatusIndicator: true,
         AccountTodayStatsCell: true,
         AccountGroupsCell: AccountGroupsCellStub,
-        AccountUsageCell: AccountUsageCellStub,
+        AccountUsageCell: !realUsageCell,
         UpstreamBillingRateCell: true,
         HelpTooltip: true,
         Icon: true,
@@ -172,6 +170,7 @@ describe('admin AccountsView lite account list', () => {
     listWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'compact-etag', data: null })
     getById.mockReset().mockResolvedValue(fullAccount)
     getBatchTodayStats.mockReset().mockResolvedValue({ stats: {} })
+    getBatchUsage.mockReset().mockResolvedValue({ usage: { '42': { five_hour: { utilization: 21 }, seven_day: { utilization: 31 } } }, errors: {} })
     getUpstreamBillingProbeSettings.mockReset().mockResolvedValue({ enabled: true })
     getUpstreamBillingRatesWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'rates-etag', data: null })
     getAllProxies.mockReset().mockResolvedValue([])
@@ -184,6 +183,45 @@ describe('admin AccountsView lite account list', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['anthropic', 'oauth'], ['anthropic', 'setup-token'], ['gemini', 'oauth']
+  ])('updates %s %s usage on auto-refresh without force or unrelated probes', async (platform, type) => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    vi.spyOn(window, 'matchMedia').mockImplementation(() => ({
+      matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn()
+    }) as unknown as MediaQueryList)
+    localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
+    const account = { ...listRow, platform, type }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mountView(true, true)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(1)
+    expect(getBatchUsage).toHaveBeenCalledWith([42], false)
+
+    const next = { ...account, extra: { session_window_utilization: 0.44, passive_usage_7d_utilization: 0.54 }, last_used_at: platform === 'gemini' ? '2026-11-16T10:00:00Z' : null }
+    getBatchUsage.mockResolvedValue({ usage: { '42': { five_hour: { utilization: 44 }, seven_day: { utilization: 54 } } }, errors: {} })
+    listWithEtag.mockResolvedValue({ notModified: false, etag: 'new', data: { items: [next], total: 1, pages: 1 } })
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(2)
+    expect(getBatchUsage).toHaveBeenLastCalledWith([42], false)
+    const cell = wrapper.findComponent({ name: 'AccountUsageCell' })
+    expect(cell.props('account').last_used_at).toBe(next.last_used_at)
+    expect(cell.props('batchedUsage').seven_day.utilization).toBe(54)
+    cell.props('requestBatchedUsage')(cell.props('account'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(getBatchUsage).toHaveBeenCalledTimes(2)
+
+    listWithEtag.mockResolvedValue({ notModified: false, etag: 'unrelated', data: { items: [{ ...next, updated_at: 'new', current_concurrency: 2, extra: { ...next.extra, unrelated: true } }], total: 1, pages: 1 } })
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushPromises()
+    expect(getBatchUsage).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
   })
 
   it('keeps lite=1 on the initial list request', async () => {
@@ -287,54 +325,6 @@ describe('admin AccountsView lite account list', () => {
     await flushPromises()
 
     expect(getUpstreamBillingRatesWithEtag.mock.calls.length).toBeGreaterThan(callsAfterMount)
-    wrapper.unmount()
-  })
-
-  it.each([
-    {
-      name: 'a Claude passive usage sample',
-      row: {
-        ...listRow,
-        platform: 'anthropic',
-        updated_at: '2026-10-25T10:00:00Z',
-        last_used_at: '2026-10-25T10:00:00Z',
-        extra: { passive_usage_sampled_at: '2026-10-25T10:00:00Z', session_window_utilization: 0.1 }
-      },
-      change: { extra: { passive_usage_sampled_at: '2026-10-25T10:01:00Z', session_window_utilization: 0.55 } },
-      before: '0.1|2026-10-25T10:00:00Z',
-      after: '0.55|2026-10-25T10:00:00Z'
-    },
-    {
-      name: 'new Gemini use',
-      row: {
-        ...listRow,
-        platform: 'gemini',
-        updated_at: '2026-10-25T10:00:00Z',
-        last_used_at: '2026-10-25T10:00:00Z'
-      },
-      change: { last_used_at: '2026-10-25T10:01:00Z' },
-      before: '|2026-10-25T10:00:00Z',
-      after: '|2026-10-25T10:01:00Z'
-    }
-  ])('replaces a row on automatic refresh when only $name changed', async ({ row, change, before, after }) => {
-    vi.useFakeTimers()
-    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
-    localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
-    listAccounts.mockResolvedValue({ items: [row], total: 1, page: 1, page_size: 20, pages: 1 })
-    listWithEtag.mockResolvedValueOnce({
-      notModified: false,
-      etag: 'next-etag',
-      data: { items: [{ ...row, ...change }], total: 1, page: 1, page_size: 20, pages: 1 }
-    })
-    const wrapper = mountView()
-    await flushPromises()
-    expect(wrapper.get('[data-test="usage-row"]').text()).toBe(before)
-
-    await vi.advanceTimersByTimeAsync(6000)
-    await flushPromises()
-
-    expect(listWithEtag).toHaveBeenCalled()
-    expect(wrapper.get('[data-test="usage-row"]').text()).toBe(after)
     wrapper.unmount()
   })
 

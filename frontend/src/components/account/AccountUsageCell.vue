@@ -771,12 +771,7 @@ import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'v
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
-import {
-  buildAnthropicUsageRefreshKey,
-  buildGeminiUsageRefreshKey,
-  buildOpenAIUsageRefreshKey,
-  type BatchedUsageRequestOptions
-} from '@/utils/accountUsageRefresh'
+import { buildAccountUsageRefreshKey, type BatchedUsageRequestOptions } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber, formatDateTime } from '@/utils/format'
 import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
@@ -798,7 +793,7 @@ import OpenCodeGoUsageCell from './OpenCodeGoUsageCell.vue'
 import { estimateWindowTotalCost } from './weeklyQuotaEstimate'
 
 // Module-level cache shared across all AccountUsageCell instances
-const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
+const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number; refreshKey: string }>()
 const USAGE_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
 const props = withDefaults(
@@ -931,12 +926,7 @@ const hasOpenAIQuotaObservation = computed(() => {
 
 const sevenDayEstimatedTotalCost = computed(() => estimateWindowTotalCost(usageInfo.value?.seven_day))
 
-// Each builder returns '' for other platforms, so at most one contributes.
-const usageRefreshKey = computed(() => (
-  buildOpenAIUsageRefreshKey(props.account) ||
-  buildAnthropicUsageRefreshKey(props.account) ||
-  buildGeminiUsageRefreshKey(props.account)
-))
+const usageRefreshKey = computed(() => buildAccountUsageRefreshKey(props.account))
 
 const shouldAutoLoadUsageOnMount = computed(() => {
   return shouldFetchUsage.value
@@ -1564,7 +1554,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
   // Check cache
   if (!options?.bypassCache) {
     const cached = _usageCache.get(props.account.id)
-    if (cached && Date.now() - cached.ts < USAGE_CACHE_TTL) {
+    if (cached && cached.refreshKey === usageRefreshKey.value && Date.now() - cached.ts < USAGE_CACHE_TTL) {
       usageInfo.value = cached.data
       loading.value = false
       return
@@ -1573,6 +1563,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
 
   loading.value = true
   error.value = null
+  const refreshKey = usageRefreshKey.value
 
   try {
 		const fetchFn = () => options?.source
@@ -1581,7 +1572,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const result = await enqueueUsageRequest(props.account, fetchFn)
     if (!unmounted.value) {
       usageInfo.value = result
-      _usageCache.set(props.account.id, { data: result, ts: Date.now() })
+      _usageCache.set(props.account.id, { data: result, ts: Date.now(), refreshKey })
     }
   } catch (e: any) {
     if (!unmounted.value) {
@@ -1645,13 +1636,14 @@ const attachVisibilityObserver = () => {
 
 const loadActiveUsage = async () => {
   const accountID = props.account.id
+  const refreshKey = usageRefreshKey.value
   activeQueryLoading.value = true
   error.value = null
   try {
     const result = await adminAPI.accounts.getUsage(accountID, 'active', true)
     if (!unmounted.value && props.account.id === accountID) {
       usageInfo.value = result
-      _usageCache.set(accountID, { data: result, ts: Date.now() })
+      _usageCache.set(accountID, { data: result, ts: Date.now(), refreshKey })
     }
   } catch (e: any) {
     if (!unmounted.value && props.account.id === accountID) {
@@ -1827,6 +1819,7 @@ watch(
 
 watch(usageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
+  if (!shouldFetchUsage.value) return
 
   // 数据变化只绕过前端缓存；force 会让后端跳过探测缓存并回写 extra/updated_at，
   // 进而再次改变 key，形成每轮自动刷新都强制探测上游的循环。
