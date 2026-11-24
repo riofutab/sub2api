@@ -715,6 +715,11 @@ type ClaudeUsage struct {
 	// Advisor 来自 usage.iterations[]，不在顶层计数里，由各解析路径显式填充。
 	Advisor AdvisorUsage `json:"-"`
 
+	// thinkingTokens 是 usage.output_tokens_details.thinking_tokens（output_tokens 的子集，不另计费），
+	// 只用于转 OpenAI 格式时输出 reasoning_tokens；上游给了才算数（0 也算）。
+	thinkingTokens        int
+	thinkingTokensPresent bool
+
 	cacheCreationInputTokensPresent     bool
 	cacheCreationInputTokensFromDetails bool
 	promptTotalTokens                   int
