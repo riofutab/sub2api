@@ -65,10 +65,10 @@ func (s *GatewayService) handleUpstreamTransportError(ctx context.Context, c *gi
 	scheduleOllamaCloudUsageActivity(s.deferredService, account)
 
 	if poolModeTreatsTransportErrorAs503(account) {
-		return poolModeTransportFailoverError(account, classifyUpstreamTransportError(err).Persistent, safeErr)
+		return poolModeTransportFailoverError(account, classifyUpstreamTransportError(err) != upstreamTransportTransient, safeErr)
 	}
 
-	if classifyUpstreamTransportError(err).Persistent {
+	if classifyUpstreamTransportError(err) != upstreamTransportTransient {
 		s.tempUnscheduleTransportError(ctx, account, safeErr)
 	}
 
