@@ -174,7 +174,12 @@ func TestTransportErrorCooldownDoesNotChangeOtherPlatforms(t *testing.T) {
 			_ = svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, errors.New("connection refused"), false)
 		}
 		require.Equal(t, 1, repo.calls, "platform=%s", platform)
-		require.WithinDuration(t, before.Add(10*time.Minute), repo.lastUntil, time.Second)
+		// The per-account setting only applies to Anthropic/Bedrock; OpenAI uses its reachability cooldown.
+		want := 10 * time.Minute
+		if platform == PlatformOpenAI {
+			want = openAITransportReachabilityCooldown
+		}
+		require.WithinDuration(t, before.Add(want), repo.lastUntil, time.Second)
 	}
 }
 

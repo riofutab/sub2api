@@ -105,6 +105,11 @@ func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 // 与 context-fragments 还会产出 proposed_plan、untrusted_content。
 func validCodexUntrustedContext(name, output string) bool {
 	switch name {
+	case "browser_tabs":
+		// Desktop wraps the tab list as ambient UI state.
+		payload, ok := strings.CutPrefix(strings.TrimSpace(output), `<in-app-browser-context source="ambient-ui-state">`)
+		payload, closed := strings.CutSuffix(payload, "</in-app-browser-context>")
+		return ok && closed && strings.TrimSpace(payload) != ""
 	case "browser_info", "terminal_info", "goal_objective", "untrusted_context", "ide_context":
 		return strings.TrimSpace(output) != ""
 	case "untrusted_content":
@@ -192,6 +197,7 @@ var (
 		[]byte("codex_apps_open_page"),
 		[]byte("codex_apps_selected_page_part_"),
 		[]byte("browser_info"),
+		[]byte("browser_tabs"),
 		[]byte("terminal_info"),
 		[]byte("goal_objective"),
 		[]byte("untrusted_context"),
