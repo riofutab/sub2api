@@ -256,6 +256,7 @@ func loadCodexGroupCatalogAccounts(ctx context.Context, repo AccountRepository, 
 			PlatformDeepseek,
 			PlatformMiniMax,
 			PlatformOpenCodeGo,
+			PlatformCommandCode,
 		},
 		false,
 	)
@@ -1183,7 +1184,9 @@ func groupCodexModelSupportsImageInput(
 			return false
 		}
 	}
-	if platform != PlatformOpenAI && platform != PlatformGrok && platform != PlatformDeepseek && platform != PlatformOpenCodeGo {
+	switch platform {
+	case PlatformOpenAI, PlatformGrok, PlatformDeepseek, PlatformOpenCodeGo, PlatformCommandCode:
+	default:
 		return false
 	}
 
@@ -1322,7 +1325,7 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 		return false
 	}
 	switch account.Platform {
-	case PlatformOpenAI, PlatformDeepseek, PlatformOpenCodeGo:
+	case PlatformOpenAI, PlatformDeepseek, PlatformOpenCodeGo, PlatformCommandCode:
 		if metadata, ok := account.GetUpstreamModelMetadata(upstreamModel); ok {
 			if modalities := normalizeCodexInputModalities(metadata.InputModalities); len(modalities) > 0 {
 				// Official GPT-6 Astra metadata briefly shipped with a stale
@@ -1334,6 +1337,14 @@ func accountCodexModelSupportsImageInput(account *Account, upstreamModel string)
 				}
 				return stringSliceContains(modalities, "image")
 			}
+		}
+		if account.IsCommandCode() {
+			// Only infer capabilities for the provider's own endpoints when a
+			// synced model has no input modalities.
+			model := strings.TrimPrefix(strings.TrimSpace(upstreamModel), "deepseek/")
+			return model == "deepseek-v4.1-flash" &&
+				strings.TrimRight(account.GetOpenAIBaseURL(), "/") == DefaultCommandCodeBaseURL &&
+				strings.TrimRight(account.GetCNProtocolBaseURL(APIProtocolResponses), "/") == DefaultCommandCodeBaseURL
 		}
 		if strings.EqualFold(strings.TrimSpace(upstreamModel), "deepseek-v4-flash-vision-exp") {
 			return account.Type == AccountTypeAPIKey
