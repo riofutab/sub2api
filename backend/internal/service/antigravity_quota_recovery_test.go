@@ -186,7 +186,7 @@ func TestAntigravityQuotaGroupForRateLimitKey(t *testing.T) {
 	}
 }
 
-func agUsage(gemini5h, geminiWeekly float64, models map[string]int) *UsageInfo {
+func agUsage(gemini5h, geminiWeekly float64, models map[string]float64) *UsageInfo {
 	info := &UsageInfo{
 		AntigravityQuota: map[string]*AntigravityModelQuota{},
 		AntigravityQuotaGroups: []*AntigravityQuotaGroup{
@@ -211,11 +211,11 @@ func TestAntigravityQuotaShowsRecovered(t *testing.T) {
 	require.False(t, antigravityQuotaShowsRecovered(agUsage(100, 3, nil), scope))
 	// Both windows have room again.
 	require.True(t, antigravityQuotaShowsRecovered(agUsage(0, 0, nil), scope))
-	require.True(t, antigravityQuotaShowsRecovered(agUsage(99.5, 42, map[string]int{model: 0}), model))
+	require.True(t, antigravityQuotaShowsRecovered(agUsage(99.5, 42, map[string]float64{model: 0}), model))
 	// The model itself has nothing left although the group shows room.
-	require.False(t, antigravityQuotaShowsRecovered(agUsage(0, 0, map[string]int{model: 100}), model))
+	require.False(t, antigravityQuotaShowsRecovered(agUsage(0, 0, map[string]float64{model: 100}), model))
 	// The exhausted model does not hold back the family scope or its siblings.
-	require.True(t, antigravityQuotaShowsRecovered(agUsage(0, 0, map[string]int{model: 100}), scope))
+	require.True(t, antigravityQuotaShowsRecovered(agUsage(0, 0, map[string]float64{model: 100}), scope))
 
 	// Missing data never clears: no group for the key, a group without windows, no summary,
 	// a forbidden or degraded result, an unknown key.
@@ -242,7 +242,7 @@ func TestRecoverAntigravityModelRateLimitsFromQuota(t *testing.T) {
 		account.RateLimitResetAt = &now
 		shared, _ := account.Extra[modelRateLimitsKey].(map[string]any)
 
-		cleared := recoverAntigravityModelRateLimitsFromQuota(context.Background(), repo, &account, agUsage(0, 0, map[string]int{model: 0}), now)
+		cleared := recoverAntigravityModelRateLimitsFromQuota(context.Background(), repo, &account, agUsage(0, 0, map[string]float64{model: 0}), now)
 
 		require.Equal(t, []string{antigravityGeminiModelRateLimitKey, model}, cleared)
 		require.Equal(t, []agQuotaRecoveryClear{{77, antigravityGeminiModelRateLimitKey}, {77, model}}, repo.cleared)
