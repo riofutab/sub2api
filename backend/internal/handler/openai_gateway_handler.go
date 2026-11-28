@@ -3534,6 +3534,12 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
 		return
 	}
+	if failoverErr.Reason == service.OpenAIResponsesToolsUnsupportedReason {
+		// No upstream request was sent for this local capability mismatch. Keep
+		// the original client error without attributing it to upstream health.
+		h.handleStreamingAwareError(c, failoverErr.ClientStatusCode, "invalid_request_error", failoverErr.ClientMessage, streamStarted)
+		return
+	}
 	if !failoverErr.IsOpenAICapacityShed() {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
