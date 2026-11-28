@@ -113,10 +113,7 @@ func (s *OpenAIGatewayService) ForwardDecisions(ctx context.Context, c *gin.Cont
 	SetActualOpenAIUpstreamEndpoint(c, endpoint)
 	SetOpsUpstreamModel(c, upstreamModel)
 
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 	started := time.Now()
 	resp, err := s.doOpenAIUpstream(req, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
