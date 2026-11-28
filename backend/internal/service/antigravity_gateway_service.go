@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -563,6 +564,9 @@ func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedMode
 func (s *AntigravityGatewayService) getClaudeTransformOptions(ctx context.Context) antigravity.TransformOptions {
 	opts := antigravity.DefaultTransformOptions()
 	opts.PromptSanitizer = antigravityPromptSanitizer()
+	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && group != nil {
+		opts.EnableMCPXML = group.MCPXMLInject
+	}
 	if s.settingService == nil {
 		return opts
 	}
