@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
@@ -109,6 +111,30 @@ func IsAntigravityAccountSwitchError(err error) (*AntigravityAccountSwitchError,
 		return switchErr, true
 	}
 	return nil, false
+}
+
+// antigravityRetrySwitchToFailover 把二次重试（签名/预算修正等）中收到的账号切换信号
+// 转为 UpstreamFailoverError，让 Handler 切换账号；不是切换信号时返回 nil。
+// 与 Gemini 路径对二次重试切换信号的处理一致。
+func antigravityRetrySwitchToFailover(c *gin.Context, account *Account, retryErr error) *UpstreamFailoverError {
+	switchErr, ok := IsAntigravityAccountSwitchError(retryErr)
+	if !ok {
+		return nil
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		AccountName:        account.Name,
+		UpstreamStatusCode: http.StatusServiceUnavailable,
+		Kind:               "failover",
+		Message:            sanitizeUpstreamErrorMessage(retryErr.Error()),
+	})
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusServiceUnavailable,
+		ForceCacheBilling: switchErr.IsStickySession,
+	}
 }
 
 // PromptTooLongError 表示上游明确返回 prompt too long
@@ -414,10 +440,7 @@ func (s *AntigravityGatewayService) TestConnectionWithPrompt(ctx context.Context
 	}
 
 	// 代理 URL
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 
 	// 复用 antigravityRetryLoop：完整的重试 / credits overages / 智能重试
 	prefix := fmt.Sprintf("[antigravity-Test] account=%d(%s)", account.ID, account.Name)
@@ -563,6 +586,9 @@ func (s *AntigravityGatewayService) buildClaudeTestRequest(projectID, mappedMode
 func (s *AntigravityGatewayService) getClaudeTransformOptions(ctx context.Context) antigravity.TransformOptions {
 	opts := antigravity.DefaultTransformOptions()
 	opts.PromptSanitizer = antigravityPromptSanitizer()
+	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && group != nil {
+		opts.EnableMCPXML = group.MCPXMLInject
+	}
 	if s.settingService == nil {
 		return opts
 	}

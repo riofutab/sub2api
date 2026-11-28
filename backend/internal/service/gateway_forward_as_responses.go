@@ -128,10 +128,7 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 9. Get proxy URL
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 
 	// 10. Build and send the request, recovering a concurrent token rotation once.
 	var upstreamReq *http.Request
@@ -206,6 +203,10 @@ func (s *GatewayService) ForwardAsResponses(
 		// Non-failover error: return Responses-formatted error to client
 		writeResponsesError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && s.rateLimitService != nil && account.IsAnthropicOAuthOrSetupToken() {
+		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
 
 	// 13. Handle normal response (convert Anthropic → Responses)

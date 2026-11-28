@@ -12,8 +12,22 @@
       class="space-y-5"
     >
       <div>
-        <label class="input-label">{{ t('common.name') }}</label>
+        <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <label class="input-label mb-0">{{ t('common.name') }}</label>
+          <UpstreamGroupSyncButton
+            v-if="account.type === 'apikey' || (account.platform === 'antigravity' && account.type === 'upstream')"
+            v-model:name="form.name"
+            v-model:notes="form.notes"
+            :source="upstreamGroupSource"
+            :allow-auto="account.type === 'apikey'"
+            :auto="upstreamGroupSyncEnabled"
+            @update:auto="setUpstreamGroupSync"
+          />
+        </div>
         <input v-model="form.name" type="text" required class="input" data-tour="edit-account-form-name" />
+        <p v-if="account.type === 'apikey' && upstreamGroupSyncEnabled" class="input-hint">
+          {{ t('admin.accounts.upstreamBilling.autoSyncGroupHint') }}
+        </p>
       </div>
       <div>
         <label class="input-label">{{ t('admin.accounts.notes') }}</label>
@@ -869,6 +883,7 @@
 
           <HeaderOverrideEditor
             :rows="headerOverrideRows"
+            :allow-variables="headerOverrideAllowVariables"
             @update:rows="headerOverrideRows = $event"
           />
         </div>
@@ -3349,22 +3364,15 @@
               {{ t('admin.accounts.mixedScheduling') }}
             </span>
           </label>
-          <div class="group relative">
-            <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
-            >
-              ?
-            </span>
-            <!-- Tooltip（向下显示避免被弹窗裁剪） -->
-            <div
-              class="pointer-events-none absolute left-0 top-full z-[100] mt-1.5 w-72 rounded bg-gray-900 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-            >
-              {{ t('admin.accounts.mixedSchedulingTooltip') }}
-              <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900 dark:border-b-gray-700"
-              ></div>
-            </div>
-          </div>
+          <HelpTooltip :content="t('admin.accounts.mixedSchedulingTooltip')" width-class="w-72">
+            <template #trigger>
+              <span
+                class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
+              >
+                ?
+              </span>
+            </template>
+          </HelpTooltip>
         </div>
         <div v-if="account?.platform === 'antigravity'" class="mt-3 flex items-center gap-2">
           <label class="flex cursor-pointer items-center gap-2">
@@ -3377,21 +3385,15 @@
               {{ t('admin.accounts.allowOverages') }}
             </span>
           </label>
-          <div class="group relative">
-            <span
-              class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
-            >
-              ?
-            </span>
-            <div
-              class="pointer-events-none absolute left-0 top-full z-[100] mt-1.5 w-72 rounded bg-gray-900 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700"
-            >
-              {{ t('admin.accounts.allowOveragesTooltip') }}
-              <div
-                class="absolute bottom-full left-3 border-4 border-transparent border-b-gray-900 dark:border-b-gray-700"
-              ></div>
-            </div>
-          </div>
+          <HelpTooltip :content="t('admin.accounts.allowOveragesTooltip')" width-class="w-72">
+            <template #trigger>
+              <span
+                class="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-200 text-xs text-gray-500 hover:bg-gray-300 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500"
+              >
+                ?
+              </span>
+            </template>
+          </HelpTooltip>
         </div>
       </div>
 
@@ -3463,6 +3465,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
 import { adminAPI } from '@/api/admin'
+import { SCHEDULING_THRESHOLD_PLATFORMS } from '@/api/admin/settings'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type {
   Account,
@@ -3488,6 +3491,7 @@ import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import TransportErrorCooldownSettings from './TransportErrorCooldownSettings.vue'
 import { DEFAULT_TRANSPORT_ERROR_COOLDOWN_MINUTES, isValidTransportErrorCooldownMinutes, readTransportErrorCooldown } from './transportErrorCooldown'
+import UpstreamGroupSyncButton from '@/components/account/UpstreamGroupSyncButton.vue'
 import OpenAIImageSizeTiersField from '@/components/account/OpenAIImageSizeTiersField.vue'
 import {
   OPENAI_IMAGE_SIZE_TIERS,
@@ -3962,6 +3966,8 @@ const customErrorCodeInput = ref<number | null>(null)
 const headerOverrideEnabled = ref(false)
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 
+// 身份上报变量仅 api_key 账号可用：OAuth 订阅上游不能收到网关用户身份
+const headerOverrideAllowVariables = computed(() => props.account?.type === 'apikey')
 const headerOverrideCapable = computed(
   () => !!props.account && isHeaderOverrideCapable(props.account.platform, props.account.type)
 )
@@ -4170,6 +4176,11 @@ const autoResetCredit5hSelected = ref(true)
 const autoResetCredit7dSelected = ref(true)
 const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
+const upstreamGroupSyncEnabled = ref(false)
+function setUpstreamGroupSync(enabled: boolean) {
+  upstreamGroupSyncEnabled.value = enabled
+  if (enabled) upstreamBillingAutoProbeEnabled.value = true
+}
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
@@ -4609,10 +4620,30 @@ const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
   }
 }
 
+const billingBaseUrl = computed(() => (
+  isCNApiKeyAccount.value && editApiProtocol.value === 'adaptive'
+    ? editAdaptiveBaseUrls.value.chat_completions
+    : editBaseUrl.value
+).trim())
+const savedBillingBaseUrl = ref('')
+const upstreamGroupSource = computed(() => {
+  const account = props.account
+  if (!account) return null
+  const apiKey = editApiKey.value.trim()
+  if (apiKey && billingBaseUrl.value) {
+    return { platform: account.platform, base_url: billingBaseUrl.value, api_key: apiKey, proxy_id: form.proxy_id }
+  }
+  if (billingBaseUrl.value === savedBillingBaseUrl.value && form.proxy_id === account.proxy_id && !apiKey) {
+    return { account_id: account.id }
+  }
+  return null
+})
+
 const handleUpstreamBillingAutoProbeChange = (enabled: boolean) => {
   upstreamBillingAutoProbeEnabled.value = enabled
   if (!enabled) {
     upstreamBillingRateSyncEnabled.value = false
+    upstreamGroupSyncEnabled.value = false
   }
 }
 
@@ -4750,6 +4781,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoResetCredit7dThreshold.value =
 		typeof extra?.auto_reset_credit_7d_threshold === 'number' ? extra.auto_reset_credit_7d_threshold * 100 : 100
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
+  upstreamGroupSyncEnabled.value =
+    upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_group_sync_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
@@ -5138,6 +5171,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     selectedErrorCodes.value = []
   }
   editApiKey.value = ''
+  savedBillingBaseUrl.value = billingBaseUrl.value
 }
 
 async function loadTLSProfiles() {
@@ -5390,7 +5424,10 @@ const applyTempUnschedConfig = (credentials: Record<string, unknown>) => {
 
 
 function supportsAccountSchedulingThresholdOverridePlatform(platform: Account['platform'] | undefined) {
-  return platform === 'openai' || platform === 'anthropic' || platform === 'grok'
+  // 与后端 AllowedSchedulingThresholdPlatforms 共用同一清单（系统设置页也用这份），
+  // 避免前端入口与后端白名单再次漂移。
+  if (!platform) return false
+  return (SCHEDULING_THRESHOLD_PLATFORMS as readonly string[]).includes(platform)
 }
 
 function normalizeAccountSchedulingThresholdOverride(value: unknown): number | null {
@@ -5797,6 +5834,9 @@ const handleSubmit = async () => {
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
     if (props.account.type === 'apikey') {
+      if (form.name === props.account.name) delete updatePayload.name
+      if (form.notes === (props.account.notes || '')) delete updatePayload.notes
+      updatePayload.upstream_billing_group_sync_enabled = upstreamGroupSyncEnabled.value
       updatePayload.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
       updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSyncEnabled.value
       if (upstreamBillingRateSyncEnabled.value) {
@@ -5918,7 +5958,9 @@ const handleSubmit = async () => {
       // Add header override if enabled for this API-key platform
       if (isHeaderOverrideCapable(props.account.platform, 'apikey')) {
         if (headerOverrideEnabled.value) {
-          const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+          const headerError = validateHeaderOverrideRows(headerOverrideRows.value, {
+            allowVariables: headerOverrideAllowVariables.value
+          })
           if (headerError) {
             appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
             return
@@ -6146,7 +6188,9 @@ const handleSubmit = async () => {
       }
 
       if (headerOverrideEnabled.value) {
-        const headerError = validateHeaderOverrideRows(headerOverrideRows.value)
+        const headerError = validateHeaderOverrideRows(headerOverrideRows.value, {
+            allowVariables: headerOverrideAllowVariables.value
+          })
         if (headerError) {
           appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
           return
@@ -6485,6 +6529,7 @@ const handleSubmit = async () => {
       if (props.account.type === 'apikey') {
         delete newExtra.upstream_billing_probe_enabled
         delete newExtra.upstream_billing_rate_sync_enabled
+        delete newExtra.upstream_billing_group_sync_enabled
       }
       // Total quota
       if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {

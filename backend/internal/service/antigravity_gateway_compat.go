@@ -363,7 +363,11 @@ func (s *AntigravityGatewayService) buildAntigravityCompatGeminiBody(
 			return nil, err
 		}
 		body = ensureGeminiFunctionCallThoughtSignatures(body)
-		body = applyGeminiCompatThinkingConfig(body, claudeBody, mappedModel, claudeRequest != nil && claudeRequest.Stream)
+		includeThoughts := claudeRequest != nil && claudeRequest.Stream
+		if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.AntigravityGeminiOmitIncludeThoughts {
+			includeThoughts = false
+		}
+		body = applyGeminiCompatThinkingConfig(body, claudeBody, mappedModel, includeThoughts)
 		body, err = injectIdentityPatchToGeminiRequest(body)
 		if err != nil {
 			return nil, err
@@ -449,10 +453,7 @@ func enableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
 }
 
 func antigravityCompatProxyURL(account *Account) string {
-	if account.ProxyID == nil || account.Proxy == nil {
-		return ""
-	}
-	return account.Proxy.URL()
+	return AccountProxyURLFailClosed(account)
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatTransportError(c *gin.Context, err error) error {

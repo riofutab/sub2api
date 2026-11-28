@@ -238,6 +238,7 @@ func ProvideAccountUsageService(
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
+	opsService *OpsService,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -253,6 +254,9 @@ func ProvideAccountUsageService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	if opsService != nil {
+		service.opsMonitoring = opsService
+	}
 	return service
 }
 
@@ -335,6 +339,17 @@ func ProvideCNProviderBalanceCheckService(
 		minutes = cfg.Gateway.CNProviders.BalanceCheckIntervalMinutes
 	}
 	svc := NewCNProviderBalanceCheckService(accountRepo, balanceService, quotaService, cfg, time.Duration(minutes)*time.Minute)
+	svc.Start()
+	return svc
+}
+
+// ProvideAntigravityQuotaRecoveryService creates and starts AntigravityQuotaRecoveryService.
+func ProvideAntigravityQuotaRecoveryService(
+	accountRepo AccountRepository,
+	proxyRepo ProxyRepository,
+	fetcher *AntigravityQuotaFetcher,
+) *AntigravityQuotaRecoveryService {
+	svc := NewAntigravityQuotaRecoveryService(accountRepo, proxyRepo, fetcher, antigravityQuotaRecoveryInterval)
 	svc.Start()
 	return svc
 }
@@ -915,6 +930,7 @@ var ProviderSet = wire.NewSet(
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,
 	ProvideCNProviderBalanceCheckService,
+	ProvideAntigravityQuotaRecoveryService,
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,

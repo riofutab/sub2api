@@ -111,6 +111,9 @@ func AnthropicToResponsesWithOptions(req *AnthropicRequest, options AnthropicToR
 // anthropicParallelToolCalls preserves the default unless a supported choice
 // explicitly disables parallel tools. Tool-choice validation stays with callers.
 func anthropicParallelToolCalls(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
 	var choice struct {
 		Type                   string `json:"type"`
 		DisableParallelToolUse bool   `json:"disable_parallel_tool_use"`

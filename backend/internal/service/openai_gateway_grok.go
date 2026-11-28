@@ -102,10 +102,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 
 	upstreamStart := time.Now()
 	var resp *http.Response
@@ -1403,10 +1400,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 		return "", OpenAIUsage{}, fmt.Errorf("build grok composer image bridge request: %w", err)
 	}
 
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {
@@ -1575,6 +1569,11 @@ func addOpenAIUsage(dst *OpenAIUsage, usage OpenAIUsage) {
 }
 
 func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token, cacheIdentity string, cfg *config.Config, settings ...*SettingService) (*http.Request, error) {
+	repaired, _, repairErr := sanitizeStrictHTTPResponsesBody(body)
+	if repairErr != nil {
+		return nil, repairErr
+	}
+	body = repaired
 	targetURL, err := buildGrokResponsesURL(account, cfg, settings...)
 	if err != nil {
 		return nil, err
@@ -1598,7 +1597,7 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 	}
 	// 账号级请求头覆写最后应用，使配置值优先于上面的内置默认头；
 	// 打到官方 CLI 网关时身份头仍由共享传输层最终强制。
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	return req, nil
 }
 

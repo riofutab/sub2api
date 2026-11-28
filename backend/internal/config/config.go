@@ -1115,6 +1115,11 @@ type GatewayConfig struct {
 	// CodexImageGenerationBridgeEnabled: 是否为 Codex `/v1/responses` 自动注入 image_generation 工具和桥接指令。
 	// 默认关闭，避免纯文本 Codex 请求被意外改写；显式携带 image_generation 工具的请求仍按分组能力转发。
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
+	// OpenAIImagesExtraModelPrefixes 扩展 `/v1/images/*` 允许的模型名。
+	// 内置白名单只有 gpt-image-*、grok-imagine*、gemini-*-image* 三族；中转站接入其他
+	// 厂商的生图模型（如 gemini-nano-banana-2.1）时在此追加前缀，按不区分大小写的前缀匹配。
+	// 默认空，等价于只放行内置三族，不改变既有行为。
+	OpenAIImagesExtraModelPrefixes []string `mapstructure:"openai_images_extra_model_prefixes"`
 	// ForcedCodexInstructionsTemplateFile: 服务端强制附加到 Codex 顶层 instructions 的模板文件路径。
 	// 模板渲染后会直接覆盖最终 instructions；若需要保留客户端 system 转换结果，请在模板中显式引用 {{ .ExistingInstructions }}。
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
@@ -1200,6 +1205,8 @@ type GatewayConfig struct {
 	// Gemini 同账号重试次数（429/5xx 等可重试错误在换号前对同一账号的重发次数，不含首次请求）
 	MaxSameAccountRetriesGemini int `mapstructure:"max_same_account_retries_gemini"`
 
+	// Let the upstream decide whether to stream thought summaries on Antigravity Gemini compatibility requests.
+	AntigravityGeminiOmitIncludeThoughts bool `mapstructure:"antigravity_gemini_omit_include_thoughts"`
 	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
 
@@ -1953,6 +1960,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	trustedProxiesEnv, trustedProxiesEnvConfigured := os.LookupEnv("SERVER_TRUSTED_PROXIES")
 	forwardedClientIPHeadersEnv, forwardedClientIPHeadersEnvConfigured := os.LookupEnv("SECURITY_FORWARDED_CLIENT_IP_HEADERS")
+	// viper 的 AutomaticEnv 无法把逗号分隔的字符串反序列化成 []string，列表型配置
+	// 需要像 trusted_proxies 一样显式读取环境变量。
+	imagesExtraPrefixesEnv, imagesExtraPrefixesEnvConfigured := os.LookupEnv("GATEWAY_OPENAI_IMAGES_EXTRA_MODEL_PREFIXES")
 	trustedProxiesConfigured := viper.InConfig("server.trusted_proxies") ||
 		viper.IsSet("server.trusted_proxies") || trustedProxiesEnvConfigured
 
@@ -1965,6 +1975,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	if forwardedClientIPHeadersEnvConfigured {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
+	}
+	if imagesExtraPrefixesEnvConfigured {
+		cfg.Gateway.OpenAIImagesExtraModelPrefixes = normalizeStringSlice(strings.Split(imagesExtraPrefixesEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	// Mirror viper's own precedence: an empty environment variable is ignored by
@@ -2549,6 +2562,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)
 	viper.SetDefault("gateway.codex_image_generation_bridge_enabled", false)
 	viper.SetDefault("gateway.anthropic_image_guard_enabled", false)
+	viper.SetDefault("gateway.openai_images_extra_model_prefixes", []string{})
 	viper.SetDefault("gateway.openai_passthrough_allow_timeout_headers", false)
 	viper.SetDefault("gateway.openai_compact_model", "gpt-5.5")
 	viper.SetDefault("gateway.live.max_session_duration_seconds", 3600)
@@ -2639,6 +2653,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
 	viper.SetDefault("gateway.image_concurrency.wait_timeout_seconds", 30)
 	viper.SetDefault("gateway.image_concurrency.max_waiting_requests", 100)
+	viper.SetDefault("gateway.antigravity_gemini_omit_include_thoughts", false)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))

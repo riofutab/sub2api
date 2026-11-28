@@ -157,6 +157,7 @@ const zhipuModels = [
   'glm-4.6', 'glm-4.7', 'glm-4.7-flash', 'glm-4.7-flashx',
   'glm-5', 'glm-5-turbo', 'glm-5.1', 'glm-5.2',
   'glm-5.3', 'glm-5.3-flash',
+  'glm-5.4',
   'glm-3-turbo', 'glm-4-alltools',
   'chatglm_turbo', 'chatglm_pro', 'chatglm_std', 'chatglm_lite',
   'cogview-3', 'cogvideo'
@@ -249,6 +250,7 @@ const yiModels = [
 
 // Moonshot/Kimi
 const moonshotModels = [
+  'k3.1-pro', 'k3.1-pro-highspeed',
   'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k',
   'kimi-latest',
   'kimi-for-coding',

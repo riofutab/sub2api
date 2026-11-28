@@ -20,6 +20,14 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	// HTTP Responses has stricter call_id requirements than native WS.
+	if GetOpenAIClientTransport(c) != OpenAIClientTransportWS {
+		repaired, _, err := sanitizeStrictHTTPResponsesBody(body)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize HTTP Responses input: %w", err)
+		}
+		body = repaired
+	}
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -1127,10 +1135,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 
 		// Get proxy URL
-		proxyURL := ""
-		if account.ProxyID != nil && account.Proxy != nil {
-			proxyURL = account.Proxy.URL()
-		}
+		proxyURL := AccountProxyURLFailClosed(account)
 
 		// Send request
 		upstreamStart := time.Now()
@@ -1445,6 +1450,12 @@ func shouldForwardOpenAIResponsesViaRawChatCompletions(account *Account) bool {
 }
 
 func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Context, account *Account, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool) (*http.Request, error) {
+	// Converted Chat/Anthropic ingress can reach this HTTP builder directly.
+	repaired, _, repairErr := sanitizeStrictHTTPResponsesBody(body)
+	if repairErr != nil {
+		return nil, repairErr
+	}
+	body = repaired
 	// Determine target URL based on account type
 	var targetURL string
 	switch account.Type {
@@ -1588,7 +1599,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	applyOpenCodeUpstreamUserAgent(account, targetURL, req.Header)
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverrides(req.Context(), req.Header)
 	applyOpenCodeSessionHeader(c, account, targetURL, req.Header, body, openCodeSessionHintBody(promptCacheKey))
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。

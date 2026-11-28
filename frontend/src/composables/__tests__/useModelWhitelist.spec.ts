@@ -8,6 +8,15 @@ import { buildModelMappingObject, getModelsByPlatform, getPresetMappingsByPlatfo
 import { BUILTIN_PLATFORM_CATALOG, resetPlatformCatalog, setPlatformCatalog } from '@/constants/platformCatalog'
 
 describe('useModelWhitelist', () => {
+  it('Kimi Coding Plan model options include exact K3.1 IDs', () => {
+    for (const platform of ['kimi', 'moonshot']) {
+      const models = getModelsByPlatform(platform)
+      expect(models).toContain('k3.1-pro')
+      expect(models).toContain('k3.1-pro-highspeed')
+      expect(models).not.toContain('k3.1')
+    }
+  })
+
   it('平台清单中没有内置模型列表的多协议供应商不预填白名单', () => {
     setPlatformCatalog({
       ...BUILTIN_PLATFORM_CATALOG,
@@ -76,6 +85,15 @@ describe('useModelWhitelist', () => {
     expect(models).not.toContain('gpt-5.1-codex-max')
     expect(models).not.toContain('gpt-5.1-codex-mini')
     expect(models).not.toContain('gpt-5.2-codex')
+  })
+
+  it('zhipu 模型列表包含 GLM-5.4', () => {
+    const models = getModelsByPlatform('zhipu')
+
+    expect(models).toContain('glm-5.4')
+    expect(models).toContain('glm-5.3')
+    expect(models).toContain('glm-5.3-flash')
+    expect(models).toContain('glm-5.2')
   })
 
   it('antigravity 模型列表包含图片模型兼容项', () => {

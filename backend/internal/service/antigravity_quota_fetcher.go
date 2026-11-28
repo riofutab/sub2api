@@ -159,7 +159,7 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 		}
 
 		// remainingFraction 是剩余比例 (0.0-1.0)，转换为使用率百分比
-		utilization := int((1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100)
+		utilization := (1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100
 
 		info.AntigravityQuota[modelName] = &AntigravityModelQuota{
 			Utilization: utilization,
@@ -269,14 +269,10 @@ func buildAntigravityQuotaGroups(summary *antigravity.QuotaSummaryResponse) []*A
 
 // GetProxyURL 获取账户的代理 URL
 func (f *AntigravityQuotaFetcher) GetProxyURL(ctx context.Context, account *Account) string {
-	if account.ProxyID == nil || f.proxyRepo == nil {
+	if account == nil || account.ProxyID == nil {
 		return ""
 	}
-	proxy, err := f.proxyRepo.GetByID(ctx, *account.ProxyID)
-	if err != nil || proxy == nil {
-		return ""
-	}
-	return proxy.URL()
+	return ResolveAccountProxyURLFailClosed(ctx, f.proxyRepo, account)
 }
 
 // classifyForbiddenType 根据 403 响应体判断禁止类型

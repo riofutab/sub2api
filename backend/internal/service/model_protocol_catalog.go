@@ -191,10 +191,7 @@ func (s *OpenAIGatewayService) modelCatalogProtocols(ctx context.Context, accoun
 	url := buildOpenAIModelsURL(base)
 	key := modelProtocolCatalogKey(account, url)
 	headers := modelProtocolCatalogHeaders(account, url)
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURLFailClosed(account)
 	accountID, concurrency := account.ID, account.Concurrency
 	return upstreamModelProtocols.lookup(ctx, key, model, time.Now(), func() {
 		ctx, cancel := context.WithTimeout(context.Background(), modelProtocolCatalogTimeout)
@@ -224,7 +221,8 @@ func modelProtocolCatalogHeaders(account *Account, url string) http.Header {
 		headers.Set("Authorization", "Bearer "+apiKey)
 	}
 	applyOpenCodeUpstreamUserAgent(account, url, headers)
-	account.ApplyHeaderOverrides(headers)
+	// 目录是账号级共享缓存，由后台刷新：不携带任何用户身份，含变量的覆写头不发送。
+	account.ApplyHeaderOverrides(context.Background(), headers)
 	return headers
 }
 
