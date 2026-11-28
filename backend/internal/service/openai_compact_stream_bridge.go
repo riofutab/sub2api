@@ -139,7 +139,9 @@ func writeOpenAICompactSSEFailureEvent(c *gin.Context, statusCode int, opsErrTyp
 	MarkOpsStreamError(c, opsErrType, message, statusCode)
 	model := ""
 	if c.Request != nil {
-		model, _ = c.Request.Context().Value(ctxkey.Model).(string)
+		ctx := c.Request.Context()
+		model, _ = ctx.Value(ctxkey.Model).(string)
+		model = compositeClientModel(ctx, model)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":            "response.failed",

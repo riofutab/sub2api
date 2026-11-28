@@ -267,6 +267,19 @@ func TestOpenAICompactKeepaliveWriter_DelegatesWhenReady(t *testing.T) {
 	require.Equal(t, "ready", rec.Body.String())
 }
 
+func TestWriteOpenAICompactSSEFailureWithCode_ReportsCompositePublicModel(t *testing.T) {
+	c, rec := newCompactBridgeTestContext(t, true)
+	ctx := context.WithValue(c.Request.Context(), ctxkey.Model, "upstream-model")
+	c.Request = c.Request.WithContext(WithCompositeRouteDecision(ctx, CompositeRouteDecision{
+		Matched: true, PublicModel: "public-alias", UpstreamModel: "upstream-model",
+	}))
+
+	writeOpenAICompactSSEFailureWithCode(c, http.StatusBadGateway, "upstream_error", "boom")
+	events := parseCompactBridgeSSE(t, rec.Body.String())
+	require.Len(t, events, 1)
+	require.Equal(t, "public-alias", gjson.Get(events[0][1], "response.model").String())
+}
+
 // fast policy block 在心跳提交后必须降级为 response.failed 终止事件。
 func TestWriteOpenAIFastPolicyBlockedResponse_AfterKeepaliveCommit(t *testing.T) {
 	c, rec := newCompactBridgeTestContext(t, true)
