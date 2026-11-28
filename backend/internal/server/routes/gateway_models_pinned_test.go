@@ -136,7 +136,8 @@ func TestGatewayRoutesAutomaticCodexCatalogTracksCanonicalIdentity(t *testing.T)
 	var version atomic.Value
 	version.Store("0.200.0")
 	service.SetCodexCanonicalUserAgentResolver(func() string {
-		return "codex_cli_rs/" + version.Load().(string) + " (Linux; x86_64) test"
+		v, _ := version.Load().(string)
+		return "codex_cli_rs/" + v + " (Linux; x86_64) test"
 	})
 	t.Cleanup(func() { service.SetCodexCanonicalUserAgentResolver(nil) })
 

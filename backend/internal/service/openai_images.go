@@ -597,10 +597,6 @@ func isGeminiCompatibleImageModel(model string) bool {
 		(strings.HasSuffix(model, "-image") || strings.Contains(model, "-image-"))
 }
 
-func validateCompatibleImagesModel(model string) error {
-	return validateCompatibleImagesModelWithExtras(model, nil)
-}
-
 // imagesModelMatchesExtraPrefix 判断 model 是否落在配置的额外生图模型前缀里。
 // 前缀按不区分大小写匹配，条目既可以是厂商前缀（gemini-nano-），也可以是完整模型名。
 func imagesModelMatchesExtraPrefix(model string, extraPrefixes []string) bool {
@@ -622,7 +618,7 @@ func imagesModelMatchesExtraPrefix(model string, extraPrefixes []string) bool {
 
 // validateCompatibleImagesModelWithExtras 在内置三族之外再放行
 // gateway.openai_images_extra_model_prefixes 里配置的模型名前缀。
-// 未配置时与 validateCompatibleImagesModel 完全等价。
+// 未配置时只放行内置三族。
 func validateCompatibleImagesModelWithExtras(model string, extraPrefixes []string) error {
 	if isGeminiCompatibleImageModel(model) || imagesModelMatchesExtraPrefix(model, extraPrefixes) {
 		return nil

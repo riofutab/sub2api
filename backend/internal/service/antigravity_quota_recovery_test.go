@@ -283,7 +283,11 @@ func TestAntigravityQuotaRecovery_SkipsAccountsWithoutLimits(t *testing.T) {
 
 	unlimited := agLimitedAccount(1, now)
 	expired := agLimitedAccount(2, now, "gemini-4-neon-high")
-	expired.Extra[modelRateLimitsKey].(map[string]any)["gemini-4-neon-high"].(map[string]any)["rate_limit_reset_at"] = now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	limits, ok := expired.Extra[modelRateLimitsKey].(map[string]any)
+	require.True(t, ok)
+	neonLimit, ok := limits["gemini-4-neon-high"].(map[string]any)
+	require.True(t, ok)
+	neonLimit["rate_limit_reset_at"] = now.Add(-time.Minute).UTC().Format(time.RFC3339)
 	undecidable := agLimitedAccount(3, now, "some-unknown-model")
 	inactive := agLimitedAccount(4, now, "gemini-4-neon-high")
 	inactive.Status = StatusError
