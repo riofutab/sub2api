@@ -109,7 +109,7 @@ func (s *OpenAIGatewayService) ForwardDecisions(ctx context.Context, c *gin.Cont
 			}
 		}
 	}
-	credAccount.ApplyHeaderOverrides(req.Header)
+	credAccount.ApplyHeaderOverrides(req.Context(), req.Header)
 	SetActualOpenAIUpstreamEndpoint(c, endpoint)
 	SetOpsUpstreamModel(c, upstreamModel)
 
